@@ -143,7 +143,7 @@ supabase link --project-ref YOUR_PROJECT_REF
 ```
 (Find project ref in Supabase → Settings → General)
 
-4. Set secrets and deploy:
+4. Set secrets and deploy the function:
 ```bash
 supabase secrets set RESEND_API_KEY=re_your_key_here
 supabase secrets set RESEND_FROM_EMAIL="BizFlow <noreply@yourdomain.com>"
@@ -151,6 +151,17 @@ supabase secrets set PUBLIC_WEB_URL=https://your-web-url.example.com
 supabase secrets set APP_SCHEME=bizflow
 supabase functions deploy send-invite-email
 ```
+
+5. Optional but useful checks:
+```bash
+supabase secrets list
+supabase functions list
+```
+
+What the app does now:
+- If email is configured correctly, Staff → Invite shows a real "Invitation Sent" success.
+- If email is not configured yet, the invite is still saved and the app shows a manual share screen with the invite link.
+- Pending invites can be re-shared any time from the Invites tab.
 
 ### Option B: Manual (no email setup)
 Invitations are still saved to the database. After creating an invite in Staff screen:

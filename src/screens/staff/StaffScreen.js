@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
-  Modal, Alert, ActivityIndicator, ScrollView,
+  Modal, Alert, ActivityIndicator, ScrollView, Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ExpoLinking from 'expo-linking';
 import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, ROLE_PERMISSIONS } from '../../utils/constants';
@@ -30,6 +31,7 @@ export default function StaffScreen() {
   const [sending, setSending] = useState(false);
   const [editModal, setEditModal] = useState(false);
   const [editStaff, setEditStaff] = useState(null);
+  const [inviteResult, setInviteResult] = useState(null);
 
   useEffect(() => {
     fetchAll();
@@ -66,6 +68,57 @@ export default function StaffScreen() {
       Alert.alert('Error', error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const buildInviteLinks = (token, providedWebLink) => {
+    const encodedToken = encodeURIComponent(token);
+    const appLink = `bizflow://register?token=${encodedToken}`;
+    const webLink = providedWebLink && providedWebLink !== appLink ? providedWebLink : null;
+    return { appLink, webLink };
+  };
+
+  const showInviteResult = ({ email, token, roleName, delivery, message, webLink }) => {
+    const links = buildInviteLinks(token, webLink);
+    setInviteResult({
+      email,
+      roleLabel: roleName ? humanizeLabel(roleName) : '',
+      delivery,
+      message,
+      ...links,
+    });
+  };
+
+  const shareInviteResult = async () => {
+    if (!inviteResult) {
+      return;
+    }
+
+    const lines = [
+      `BizFlow invite for ${inviteResult.email}${inviteResult.roleLabel ? ` as ${inviteResult.roleLabel}` : ''}.`,
+      inviteResult.webLink ? `Web registration link:\n${inviteResult.webLink}` : null,
+      `App invite link:\n${inviteResult.appLink}`,
+    ].filter(Boolean);
+
+    try {
+      await Share.share({
+        message: lines.join('\n\n'),
+        url: inviteResult.webLink || inviteResult.appLink,
+      });
+    } catch (_error) {
+      Alert.alert('Share Unavailable', 'Copy the invite link manually from the screen.');
+    }
+  };
+
+  const openInviteLink = async (url) => {
+    if (!url) {
+      return;
+    }
+
+    try {
+      await ExpoLinking.openURL(url);
+    } catch (_error) {
+      Alert.alert('Unable to Open Link', 'Copy the link manually from the screen.');
     }
   };
 
@@ -111,7 +164,7 @@ export default function StaffScreen() {
         throw inviteError;
       }
 
-      const { error: emailError } = await supabase.functions.invoke('send-invite-email', {
+      const { data: emailData, error: emailError } = await supabase.functions.invoke('send-invite-email', {
         body: {
           to: normalizedEmail,
           token,
@@ -121,19 +174,38 @@ export default function StaffScreen() {
         },
       });
 
-      if (emailError) {
-        console.warn('Email function error:', emailError);
-      }
-
       setInviteModal(false);
       setInviteEmail('');
       setSelectedRole('cashier');
       await fetchAll();
 
-      Alert.alert(
-        'Invitation Sent',
-        `An invitation has been sent to ${normalizedEmail}. They will receive a link to download the app and register.`
-      );
+      if (emailError) {
+        showInviteResult({
+          email: normalizedEmail,
+          token,
+          roleName: selectedRole,
+          delivery: 'failed',
+          message: 'The invite was saved, but BizFlow could not send the email. Share the link below manually.',
+        });
+        return;
+      }
+
+      if (emailData?.delivery === 'sent') {
+        Alert.alert(
+          'Invitation Sent',
+          `The invitation email was sent to ${normalizedEmail}.`
+        );
+        return;
+      }
+
+      showInviteResult({
+        email: normalizedEmail,
+        token,
+        roleName: selectedRole,
+        delivery: emailData?.delivery || 'manual',
+        message: emailData?.message || 'The invite was saved. Share the link below manually.',
+        webLink: emailData?.webLink || null,
+      });
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
@@ -322,9 +394,23 @@ export default function StaffScreen() {
                     <Text style={[styles.statusBadgeText, { color: status.color }]}>{status.label}</Text>
                   </View>
                   {item.status === 'pending' && hasPermission('invite_staff') && (
-                    <TouchableOpacity onPress={() => revokeInvite(item.id)} style={styles.revokeBtn}>
-                      <Text style={styles.revokeBtnText}>Revoke</Text>
-                    </TouchableOpacity>
+                    <>
+                      <TouchableOpacity
+                        onPress={() => showInviteResult({
+                          email: item.email,
+                          token: item.token,
+                          roleName: item.roles?.name || '',
+                          delivery: 'manual',
+                          message: 'Share this pending invite link manually if needed.',
+                        })}
+                        style={styles.secondaryActionBtn}
+                      >
+                        <Text style={styles.secondaryActionText}>Share</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => revokeInvite(item.id)} style={styles.revokeBtn}>
+                        <Text style={styles.revokeBtnText}>Revoke</Text>
+                      </TouchableOpacity>
+                    </>
                   )}
                 </View>
               </View>
@@ -422,6 +508,56 @@ export default function StaffScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={Boolean(inviteResult)} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '75%' }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {inviteResult?.delivery === 'failed' ? 'Invite Saved' : 'Share Invitation'}
+              </Text>
+              <TouchableOpacity onPress={() => setInviteResult(null)}>
+                <Ionicons name="close" size={24} color={COLORS.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.inviteSummaryCard}>
+              <Text style={styles.inviteSummaryEmail}>{inviteResult?.email}</Text>
+              {inviteResult?.roleLabel ? (
+                <Text style={styles.inviteSummaryRole}>Role: {inviteResult.roleLabel}</Text>
+              ) : null}
+              <Text style={styles.inviteSummaryMessage}>
+                {inviteResult?.message || 'Share the link below manually.'}
+              </Text>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {inviteResult?.webLink ? (
+                <View style={styles.linkCard}>
+                  <Text style={styles.linkLabel}>Web registration link</Text>
+                  <Text selectable style={styles.linkValue}>{inviteResult.webLink}</Text>
+                  <TouchableOpacity
+                    style={styles.linkActionBtn}
+                    onPress={() => openInviteLink(inviteResult.webLink)}
+                  >
+                    <Text style={styles.linkActionText}>Open Web Link</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <View style={styles.linkCard}>
+                <Text style={styles.linkLabel}>App invite link</Text>
+                <Text selectable style={styles.linkValue}>{inviteResult?.appLink}</Text>
+              </View>
+
+              <TouchableOpacity style={styles.sendBtn} onPress={shareInviteResult}>
+                <Ionicons name="share-social" size={18} color={COLORS.white} />
+                <Text style={styles.sendBtnText}>Share Invite Link</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -458,6 +594,8 @@ const styles = StyleSheet.create({
   statusBadgeText: { fontSize: 10, fontWeight: '700' },
   revokeBtn: { paddingHorizontal: 8, paddingVertical: 2 },
   revokeBtnText: { color: COLORS.danger, fontSize: 11, fontWeight: '600' },
+  secondaryActionBtn: { paddingHorizontal: 8, paddingVertical: 2 },
+  secondaryActionText: { color: COLORS.secondary, fontSize: 11, fontWeight: '600' },
   empty: { alignItems: 'center', padding: 48 },
   emptyText: { color: COLORS.textLight, marginTop: 10, fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
@@ -477,6 +615,15 @@ const styles = StyleSheet.create({
   permGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   permItem: { flexDirection: 'row', alignItems: 'center', gap: 4, width: '48%' },
   permText: { fontSize: 10, textTransform: 'capitalize' },
+  inviteSummaryCard: { backgroundColor: COLORS.bg, borderRadius: 14, padding: 14, marginBottom: 14 },
+  inviteSummaryEmail: { fontSize: 15, fontWeight: '700', color: COLORS.text },
+  inviteSummaryRole: { fontSize: 12, color: COLORS.secondary, fontWeight: '600', marginTop: 4 },
+  inviteSummaryMessage: { fontSize: 12, color: COLORS.textLight, marginTop: 8, lineHeight: 18 },
+  linkCard: { backgroundColor: COLORS.bg, borderRadius: 12, padding: 12, marginBottom: 10 },
+  linkLabel: { fontSize: 12, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
+  linkValue: { fontSize: 12, color: COLORS.secondary, lineHeight: 18 },
+  linkActionBtn: { alignSelf: 'flex-start', marginTop: 10, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border },
+  linkActionText: { fontSize: 12, fontWeight: '700', color: COLORS.secondary },
   sendBtn: { backgroundColor: COLORS.secondary, borderRadius: 12, height: 50, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 8, marginBottom: 16 },
   sendBtnText: { color: COLORS.white, fontSize: 16, fontWeight: '700' },
 });

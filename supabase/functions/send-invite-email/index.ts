@@ -123,7 +123,8 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: true,
-          note: "Email service not configured. Share the invite link manually.",
+          delivery: "manual",
+          message: "Email service is not configured yet. Share the invite link manually.",
           appLink,
           webLink,
         }),
@@ -147,11 +148,28 @@ serve(async (req) => {
 
     if (!emailRes.ok) {
       const err = await emailRes.text();
-      throw new Error(`Email failed: ${err}`);
+      console.error("Resend delivery failed:", err);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          delivery: "failed",
+          message: "Email delivery failed. Share the invite link manually and check the function logs.",
+          providerError: err,
+          appLink,
+          webLink,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     return new Response(
-      JSON.stringify({ success: true, appLink, webLink }),
+      JSON.stringify({
+        success: true,
+        delivery: "sent",
+        message: "Invitation email sent successfully.",
+        appLink,
+        webLink,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
