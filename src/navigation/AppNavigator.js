@@ -56,10 +56,10 @@ function MainTabs() {
       screenOptions={({ route }) => ({
         tabBarIcon: ({ focused, color }) => {
           const icons = {
-            Dashboard: focused ? 'home' : 'home-outline',
-            Sales: focused ? 'receipt' : 'receipt-outline',
-            Stock: focused ? 'cube' : 'cube-outline',
-            Reports: focused ? 'bar-chart' : 'bar-chart-outline',
+            Dashboard: focused ? 'pie-chart' : 'pie-chart-outline',
+            Sales: focused ? 'cart' : 'cart-outline',
+            Stock: focused ? 'archive' : 'archive-outline',
+            Reports: focused ? 'stats-chart' : 'stats-chart-outline',
             Staff: focused ? 'people' : 'people-outline',
             Profile: focused ? 'person' : 'person-outline',
           };

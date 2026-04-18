@@ -79,16 +79,18 @@ function StartupSplash({ onFinish }) {
 
   return (
     <Animated.View style={[styles.splashOverlay, { opacity }]}>
-      <Animated.Text
+      <Animated.View
         style={[
-          styles.splashWord,
           {
             transform: [{ scale }],
           },
         ]}
       >
-        Bflow
-      </Animated.Text>
+        <Text style={styles.splashWord}>
+          <Text style={styles.splashWordAccent}>B</Text>
+          <Text style={styles.splashWordMain}>flow</Text>
+        </Text>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -127,10 +129,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#06070D',
   },
   splashWord: {
-    color: '#F8FAFC',
-    fontSize: 42,
+    fontSize: 48,
     fontWeight: '800',
-    letterSpacing: 5,
-    textTransform: 'uppercase',
+    letterSpacing: 2,
+  },
+  splashWordAccent: {
+    color: '#22C55E',
+  },
+  splashWordMain: {
+    color: '#F8FAFC',
   },
 });

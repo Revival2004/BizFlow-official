@@ -11,7 +11,7 @@ import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
-import { saveOfflineSale, cacheProducts, getCachedProducts } from '../../utils/offline';
+import { saveOfflineSale, cacheProducts, getCachedProducts, syncOfflineData } from '../../utils/offline';
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -41,6 +41,7 @@ export default function NewSaleScreen({ navigation }) {
   const { profile } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const syncInProgressRef = useRef(false);
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
@@ -56,6 +57,32 @@ export default function NewSaleScreen({ navigation }) {
   useEffect(() => {
     let mounted = true;
 
+    const syncPendingSales = async () => {
+      if (syncInProgressRef.current || !profile?.business_id || !profile?.id) {
+        return;
+      }
+
+      syncInProgressRef.current = true;
+
+      try {
+        const result = await syncOfflineData(profile.business_id, profile.id);
+
+        if (result.synced > 0 && mounted) {
+          await fetchProducts(false);
+          Alert.alert(
+            'Offline Sales Synced',
+            `${result.synced} saved sale${result.synced === 1 ? '' : 's'} uploaded to the cloud.`
+          );
+        }
+
+        if (result.failed > 0 && mounted) {
+          showToast(`${result.failed} offline sale${result.failed === 1 ? '' : 's'} still waiting to sync`);
+        }
+      } finally {
+        syncInProgressRef.current = false;
+      }
+    };
+
     const init = async () => {
       const state = await NetInfo.fetch();
       const offline = !state.isConnected;
@@ -63,12 +90,21 @@ export default function NewSaleScreen({ navigation }) {
         setIsOffline(offline);
       }
       await fetchProducts(offline);
+      if (!offline) {
+        await syncPendingSales();
+      }
     };
 
     init();
 
     const unsubscribe = NetInfo.addEventListener((state) => {
-      setIsOffline(!state.isConnected);
+      const offline = !state.isConnected;
+      setIsOffline(offline);
+
+      if (!offline) {
+        syncPendingSales();
+        fetchProducts(false);
+      }
     });
 
     return () => {
