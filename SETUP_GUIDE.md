@@ -84,22 +84,22 @@ npm install
 ```
 
 ### Step 8: Configure and build
+This project already includes `eas.json` with an APK profile.
+
+Make sure you are logged in to Expo:
 ```bash
-eas build:configure
+eas login
 ```
 
-When it creates eas.json, make sure it has:
-```json
-{
-  "build": {
-    "preview": { "android": { "buildType": "apk" } }
-  }
-}
+For cloud builds, your `.env` file may not be available because it is gitignored. Set the public app values in EAS so the APK gets your Supabase config:
+```bash
+eas env:create --name EXPO_PUBLIC_SUPABASE_URL --value https://YOUR_PROJECT_ID.supabase.co --environment preview --visibility plaintext
+eas env:create --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value YOUR_ANON_KEY --environment preview --visibility sensitive
 ```
 
-Then build:
+Then build the installable APK:
 ```bash
-eas build -p android --profile preview
+eas build -p android --profile apk
 ```
 
 - Choose "Generate new keystore" when prompted

@@ -17,7 +17,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1A1F36"
       },
-      "package": "com.yourbusiness.bizflow",
+      "package": "com.revival2004.bizflow",
+      "versionCode": 1,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -28,7 +29,8 @@
       ]
     },
     "ios": {
-      "bundleIdentifier": "com.yourbusiness.bizflow",
+      "bundleIdentifier": "com.revival2004.bizflow",
+      "buildNumber": "1",
       "supportsTablet": true
     },
     "web": {
