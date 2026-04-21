@@ -8,6 +8,7 @@ import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
+import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 
 export default function SalesHistoryScreen() {
   const { profile, hasPermission } = useAuth();
@@ -20,10 +21,20 @@ export default function SalesHistoryScreen() {
   const [loadingItems, setLoadingItems] = useState(false);
 
   useEffect(() => {
+    if (!profile?.business_id) {
+      setSales([]);
+      setLoading(false);
+      return;
+    }
+
     fetchSales();
-  }, [filter]);
+  }, [filter, profile?.business_id]);
 
   const fetchSales = async () => {
+    if (!profile?.business_id) {
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -55,7 +66,19 @@ export default function SalesHistoryScreen() {
         throw error;
       }
 
-      setSales(await attachSellerNames(data || []));
+      const nextSales = await attachSellerNames(data || []);
+      setSales(nextSales);
+
+      if (selectedSale?.id) {
+        const refreshedSale = nextSales.find((entry) => entry.id === selectedSale.id);
+        setSelectedSale(refreshedSale || null);
+
+        if (refreshedSale) {
+          await fetchSaleItems(refreshedSale.id);
+        } else {
+          setSaleItems([]);
+        }
+      }
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
@@ -63,16 +86,16 @@ export default function SalesHistoryScreen() {
     }
   };
 
-  const viewSale = async (sale) => {
-    setSelectedSale(sale);
-    setSaleItems([]);
-    setLoadingItems(true);
+  const fetchSaleItems = async (saleId, showLoader = false) => {
+    if (showLoader) {
+      setLoadingItems(true);
+    }
 
     try {
       const { data, error } = await supabase
         .from('sale_items')
         .select('*')
-        .eq('sale_id', sale.id)
+        .eq('sale_id', saleId)
         .order('created_at', { ascending: true });
 
       if (error) {
@@ -80,12 +103,47 @@ export default function SalesHistoryScreen() {
       }
 
       setSaleItems(data || []);
+      return data || [];
     } catch (error) {
       Alert.alert('Error', error.message);
+      return [];
     } finally {
-      setLoadingItems(false);
+      if (showLoader) {
+        setLoadingItems(false);
+      }
     }
   };
+
+  const viewSale = async (sale) => {
+    setSelectedSale(sale);
+    setSaleItems([]);
+    await fetchSaleItems(sale.id, true);
+  };
+
+  useRealtimeRefresh({
+    enabled: Boolean(profile?.business_id),
+    channelName: `sales-history:${profile?.business_id}:${filter}`,
+    bindings: [
+      {
+        event: '*',
+        schema: 'public',
+        table: 'sales',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'sale_items',
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'profiles',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+    ],
+    onChange: fetchSales,
+  });
 
   const voidSale = async (saleId) => {
     if (!hasPermission('void_sale')) {

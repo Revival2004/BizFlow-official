@@ -235,6 +235,9 @@ Deep link doesn't open app
 Email not arriving
 → Check spam. Verify Edge Function deployed. Check Supabase → Functions → Logs.
 
+Changes do not update live across devices
+â†’ Re-run the latest supabase_schema.sql in Supabase SQL Editor so the BizFlow tables are added to Supabase Realtime.
+
 ---
 
 ## PROJECT FILES

@@ -9,6 +9,7 @@ import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, ROLE_PERMISSIONS } from '../../utils/constants';
 import { humanizeLabel } from '../../utils/data';
+import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 
 const AVAILABLE_ROLES = [
   { key: 'sales_manager', label: 'Sales Manager', desc: 'Can sell, view reports and profits', color: COLORS.secondary, icon: 'trending-up' },
@@ -34,10 +35,19 @@ export default function StaffScreen() {
   const [inviteResult, setInviteResult] = useState(null);
 
   useEffect(() => {
+    if (!profile?.business_id) {
+      setLoading(false);
+      return;
+    }
+
     fetchAll();
-  }, []);
+  }, [profile?.business_id, profile?.id]);
 
   const fetchAll = async () => {
+    if (!profile?.business_id) {
+      return;
+    }
+
     try {
       const [staffRes, rolesRes, invitesRes, businessRes] = await Promise.all([
         supabase
@@ -70,6 +80,38 @@ export default function StaffScreen() {
       setLoading(false);
     }
   };
+
+  useRealtimeRefresh({
+    enabled: Boolean(profile?.business_id),
+    channelName: `staff:${profile?.business_id}`,
+    bindings: [
+      {
+        event: '*',
+        schema: 'public',
+        table: 'profiles',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'invitations',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'roles',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'businesses',
+        filter: `id=eq.${profile?.business_id}`,
+      },
+    ],
+    onChange: fetchAll,
+  });
 
   const buildInviteLinks = (token, providedWebLink) => {
     const encodedToken = encodeURIComponent(token);

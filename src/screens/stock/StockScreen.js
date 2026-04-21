@@ -9,6 +9,7 @@ import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
+import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -107,6 +108,32 @@ export default function StockScreen() {
       setLoading(false);
     }
   };
+
+  useRealtimeRefresh({
+    enabled: Boolean(profile?.business_id),
+    channelName: `stock:${profile?.business_id}`,
+    bindings: [
+      {
+        event: '*',
+        schema: 'public',
+        table: 'products',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'categories',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'stock_movements',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+    ],
+    onChange: fetchAll,
+  });
 
   const filtered = products.filter((product) => {
     const matchesSearch =

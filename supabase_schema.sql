@@ -455,7 +455,78 @@ create trigger trigger_low_stock
   for each row execute function public.check_low_stock();
 
 -- ============================================================
--- 7. BOOTSTRAP FUNCTION
+-- 7. REALTIME PUBLICATION
+-- ============================================================
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'businesses'
+    ) then
+      alter publication supabase_realtime add table public.businesses;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'roles'
+    ) then
+      alter publication supabase_realtime add table public.roles;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'profiles'
+    ) then
+      alter publication supabase_realtime add table public.profiles;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'invitations'
+    ) then
+      alter publication supabase_realtime add table public.invitations;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'categories'
+    ) then
+      alter publication supabase_realtime add table public.categories;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'products'
+    ) then
+      alter publication supabase_realtime add table public.products;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'stock_movements'
+    ) then
+      alter publication supabase_realtime add table public.stock_movements;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'sales'
+    ) then
+      alter publication supabase_realtime add table public.sales;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'sale_items'
+    ) then
+      alter publication supabase_realtime add table public.sale_items;
+    end if;
+  end if;
+end $$;
+
+-- ============================================================
+-- 8. BOOTSTRAP FUNCTION
 -- Run this manually ONCE after your first admin signup
 -- ============================================================
 
@@ -525,7 +596,7 @@ begin
 end; $$;
 
 -- ============================================================
--- 8. GRANT PERMISSIONS
+-- 9. GRANT PERMISSIONS
 -- ============================================================
 grant usage on schema public to anon, authenticated;
 grant all on all tables in schema public to anon, authenticated;

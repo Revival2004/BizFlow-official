@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { isSupabaseConfigured, supabase } from '../utils/supabase';
+import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh';
 
 const AuthContext = createContext({});
 
@@ -41,6 +42,32 @@ export const AuthProvider = ({ children }) => {
       setLoading(false);
     }
   };
+
+  useRealtimeRefresh({
+    enabled: Boolean(user?.id),
+    channelName: `auth-profile:${user?.id}`,
+    bindings: [
+      {
+        event: '*',
+        schema: 'public',
+        table: 'profiles',
+        filter: `id=eq.${user?.id}`,
+      },
+      ...(profile?.role_id
+        ? [{
+            event: '*',
+            schema: 'public',
+            table: 'roles',
+            filter: `id=eq.${profile.role_id}`,
+          }]
+        : []),
+    ],
+    onChange: () => {
+      if (user?.id) {
+        fetchProfile(user.id);
+      }
+    },
+  });
 
   const signIn = async (email, password) => {
     if (!isSupabaseConfigured) {

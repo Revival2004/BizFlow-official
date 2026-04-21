@@ -12,6 +12,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
 import { syncOfflineData } from '../../utils/offline';
+import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 
 export default function DashboardScreen({ navigation }) {
   const { profile, hasPermission } = useAuth();
@@ -122,6 +123,26 @@ export default function DashboardScreen({ navigation }) {
       setRefreshing(false);
     }
   };
+
+  useRealtimeRefresh({
+    enabled: Boolean(profile?.business_id),
+    channelName: `dashboard:${profile?.business_id}`,
+    bindings: [
+      {
+        event: '*',
+        schema: 'public',
+        table: 'sales',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'profiles',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+    ],
+    onChange: fetchStats,
+  });
 
   const endDay = () => {
     Alert.alert(

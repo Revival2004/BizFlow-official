@@ -12,6 +12,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
 import { saveOfflineSale, cacheProducts, getCachedProducts, syncOfflineData } from '../../utils/offline';
+import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -55,6 +56,11 @@ export default function NewSaleScreen({ navigation }) {
   const [toast, setToast] = useState({ message: '', trigger: 0 });
 
   useEffect(() => {
+    if (!profile?.business_id || !profile?.id) {
+      setLoading(false);
+      return undefined;
+    }
+
     let mounted = true;
 
     const syncPendingSales = async () => {
@@ -111,7 +117,7 @@ export default function NewSaleScreen({ navigation }) {
       mounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [profile?.business_id, profile?.id]);
 
   const showToast = (message) => {
     setToast({ message, trigger: Date.now() });
@@ -151,6 +157,20 @@ export default function NewSaleScreen({ navigation }) {
       setLoading(false);
     }
   };
+
+  useRealtimeRefresh({
+    enabled: Boolean(profile?.business_id) && !isOffline,
+    channelName: `new-sale:${profile?.business_id}`,
+    bindings: [
+      {
+        event: '*',
+        schema: 'public',
+        table: 'products',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+    ],
+    onChange: () => fetchProducts(false),
+  });
 
   const filtered = products.filter((product) =>
     product.name.toLowerCase().includes(search.toLowerCase()) ||

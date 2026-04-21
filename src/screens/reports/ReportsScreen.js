@@ -12,6 +12,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
+import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 
 export default function ReportsScreen() {
   const { profile, hasPermission } = useAuth();
@@ -158,6 +159,34 @@ export default function ReportsScreen() {
       setLoading(false);
     }
   };
+
+  useRealtimeRefresh({
+    enabled: Boolean(profile?.business_id),
+    channelName: `reports:${profile?.business_id}:${period}`,
+    bindings: [
+      {
+        event: '*',
+        schema: 'public',
+        table: 'sales',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'sale_items',
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'products',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+    ],
+    onChange: () => {
+      fetchReport();
+      fetchAllProducts();
+    },
+  });
 
   const downloadCsvOnWeb = (csv, filename) => {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
