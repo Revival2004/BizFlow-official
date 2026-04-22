@@ -9,6 +9,7 @@ import { useAuth } from '../../context/AuthContext';
 import { COLORS, fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
+import { cleanObject, cleanText } from '../../utils/textEncoding';
 
 export default function SalesHistoryScreen() {
   const { profile, hasPermission } = useAuth();
@@ -66,7 +67,7 @@ export default function SalesHistoryScreen() {
         throw error;
       }
 
-      const nextSales = await attachSellerNames(data || []);
+      const nextSales = cleanObject(await attachSellerNames(data || []));
       setSales(nextSales);
 
       if (selectedSale?.id) {
@@ -102,8 +103,9 @@ export default function SalesHistoryScreen() {
         throw error;
       }
 
-      setSaleItems(data || []);
-      return data || [];
+      const nextItems = cleanObject(data || []);
+      setSaleItems(nextItems);
+      return nextItems;
     } catch (error) {
       Alert.alert('Error', error.message);
       return [];
@@ -158,64 +160,18 @@ export default function SalesHistoryScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const sale = sales.find((entry) => entry.id === saleId);
-            const { data: items, error: itemsError } = await supabase
-              .from('sale_items')
-              .select('*')
-              .eq('sale_id', saleId);
+            const { data, error } = await supabase.rpc('void_sale_atomic', {
+              p_sale_id: saleId,
+              p_voided_by: profile.id,
+              p_void_reason: 'Customer request',
+            });
 
-            if (itemsError) {
-              throw itemsError;
+            if (error) {
+              throw error;
             }
 
-            for (const item of items || []) {
-              const { data: product, error: productError } = await supabase
-                .from('products')
-                .select('quantity')
-                .eq('id', item.product_id)
-                .single();
-
-              if (productError) {
-                throw productError;
-              }
-
-              const { error: updateError } = await supabase
-                .from('products')
-                .update({ quantity: product.quantity + item.quantity })
-                .eq('id', item.product_id);
-
-              if (updateError) {
-                throw updateError;
-              }
-
-              const { error: movementError } = await supabase
-                .from('stock_movements')
-                .insert({
-                  product_id: item.product_id,
-                  business_id: profile.business_id,
-                  type: 'void',
-                  quantity: item.quantity,
-                  reference: sale?.reference_number || 'VOID',
-                  performed_by: profile.id,
-                  notes: 'Sale voided',
-                });
-
-              if (movementError) {
-                throw movementError;
-              }
-            }
-
-            const { error: saleError } = await supabase
-              .from('sales')
-              .update({
-                status: 'voided',
-                voided_by: profile.id,
-                voided_at: new Date().toISOString(),
-              })
-              .eq('id', saleId);
-
-            if (saleError) {
-              throw saleError;
+            if (!data?.success) {
+              throw new Error(data?.error || 'Sale could not be voided.');
             }
 
             setSelectedSale(null);
@@ -230,10 +186,11 @@ export default function SalesHistoryScreen() {
     ]);
   };
 
+  const searchTerm = cleanText(search || '').toLowerCase();
   const filtered = sales.filter((sale) =>
-    sale.reference_number?.toLowerCase().includes(search.toLowerCase()) ||
-    sale.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
-    sale.sellerName?.toLowerCase().includes(search.toLowerCase())
+    cleanText(sale.reference_number || '').toLowerCase().includes(searchTerm) ||
+    cleanText(sale.customer_name || '').toLowerCase().includes(searchTerm) ||
+    cleanText(sale.sellerName || '').toLowerCase().includes(searchTerm)
   );
 
   const totalRevenue = filtered.reduce(
@@ -277,9 +234,9 @@ export default function SalesHistoryScreen() {
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.saleCard} onPress={() => viewSale(item)}>
               <View style={styles.saleCardLeft}>
-                <Text style={styles.saleRef}>{item.reference_number}</Text>
-                <Text style={styles.saleCustomer}>{item.customer_name || 'Walk-in Customer'}</Text>
-                <Text style={styles.saleCashier}>By: {item.sellerName}</Text>
+                <Text style={styles.saleRef}>{cleanText(item.reference_number || '')}</Text>
+                <Text style={styles.saleCustomer}>{cleanText(item.customer_name || 'Walk-in Customer')}</Text>
+                <Text style={styles.saleCashier}>By: {cleanText(item.sellerName || 'Staff')}</Text>
                 <Text style={styles.saleDate}>{new Date(item.created_at).toLocaleString()}</Text>
               </View>
               <View style={styles.saleCardRight}>
@@ -307,7 +264,7 @@ export default function SalesHistoryScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{selectedSale?.reference_number}</Text>
+              <Text style={styles.modalTitle}>{cleanText(selectedSale?.reference_number || '')}</Text>
               <TouchableOpacity onPress={() => setSelectedSale(null)}>
                 <Ionicons name="close" size={24} color={COLORS.text} />
               </TouchableOpacity>
@@ -316,7 +273,7 @@ export default function SalesHistoryScreen() {
             <ScrollView>
               <View style={styles.saleDetailRow}>
                 <Text style={styles.detailLabel}>Customer</Text>
-                <Text style={styles.detailValue}>{selectedSale?.customer_name || 'Walk-in'}</Text>
+                <Text style={styles.detailValue}>{cleanText(selectedSale?.customer_name || 'Walk-in')}</Text>
               </View>
               <View style={styles.saleDetailRow}>
                 <Text style={styles.detailLabel}>Date</Text>
@@ -333,7 +290,7 @@ export default function SalesHistoryScreen() {
               ) : (
                 saleItems.map((item) => (
                   <View key={item.id} style={styles.itemRow}>
-                    <Text style={styles.itemName} numberOfLines={1}>{item.product_name}</Text>
+                    <Text style={styles.itemName} numberOfLines={1}>{cleanText(item.product_name || '')}</Text>
                     <Text style={styles.itemQty}>x{item.quantity}</Text>
                     <Text style={styles.itemTotal}>{fmt(item.total_price)}</Text>
                   </View>

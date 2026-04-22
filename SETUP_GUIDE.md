@@ -28,6 +28,11 @@ A fully functional multi-user business management app with:
 3. Copy the ENTIRE contents and paste into the SQL editor
 4. Click Run — you should see "Success. No rows returned"
 
+Important:
+- The latest `supabase_schema.sql` now includes the atomic `process_sale()` and `void_sale_atomic()` RPC functions.
+- It also includes the Supabase Realtime publication setup used for live sync across devices.
+- If you already ran an older schema before, re-run the latest `supabase_schema.sql` once so your project picks up both updates.
+
 ### Step 3: Create your admin account
 1. Supabase dashboard → Authentication → Users → Add User → Create new user
 2. Enter your email and password → Create User
@@ -236,7 +241,7 @@ Email not arriving
 → Check spam. Verify Edge Function deployed. Check Supabase → Functions → Logs.
 
 Changes do not update live across devices
-â†’ Re-run the latest supabase_schema.sql in Supabase SQL Editor so the BizFlow tables are added to Supabase Realtime.
+-> Re-run the latest supabase_schema.sql in Supabase SQL Editor so the BizFlow tables are added to Supabase Realtime and the atomic sales RPCs are installed.
 
 ---
 

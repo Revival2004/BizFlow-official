@@ -92,7 +92,7 @@ export default function LoginScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.footer}>BizFlow v1.0 — Invite-only access</Text>
+        <Text style={styles.footer}>BizFlow v1.0 - Invite-only access</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );

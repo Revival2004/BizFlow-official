@@ -10,6 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
+import { cleanObject, cleanText } from '../../utils/textEncoding';
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -100,8 +101,8 @@ export default function StockScreen() {
       if (productsRes.error) throw productsRes.error;
       if (categoriesRes.error) throw categoriesRes.error;
 
-      setProducts(productsRes.data || []);
-      setCategories(categoriesRes.data || []);
+      setProducts(cleanObject(productsRes.data || []));
+      setCategories(cleanObject(categoriesRes.data || []));
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
@@ -135,10 +136,11 @@ export default function StockScreen() {
     onChange: fetchAll,
   });
 
+  const searchTerm = cleanText(search || '').toLowerCase();
   const filtered = products.filter((product) => {
     const matchesSearch =
-      product.name.toLowerCase().includes(search.toLowerCase()) ||
-      (product.sku && product.sku.toLowerCase().includes(search.toLowerCase()));
+      cleanText(product.name || '').toLowerCase().includes(searchTerm) ||
+      cleanText(product.sku || '').toLowerCase().includes(searchTerm);
 
     const matchesCategory = catFilter === 'all' || product.category_id === catFilter;
     return matchesSearch && matchesCategory;
@@ -159,15 +161,15 @@ export default function StockScreen() {
     setSaving(true);
 
     const payload = {
-      name: form.name.trim(),
-      sku: form.sku || null,
+      name: cleanText(form.name.trim()),
+      sku: cleanText(form.sku || '') || null,
       cost_price: parseFloat(form.cost_price),
       selling_price: parseFloat(form.selling_price),
       quantity: parseInt(form.quantity, 10) || 0,
       reorder_level: parseInt(form.reorder_level, 10) || 5,
       category_id: form.category_id || null,
-      unit: form.unit || 'pcs',
-      description: form.description || null,
+      unit: cleanText(form.unit || 'pcs'),
+      description: cleanText(form.description || '') || null,
       business_id: profile.business_id,
       is_active: true,
     };
@@ -199,7 +201,7 @@ export default function StockScreen() {
         }
 
         if (newQty <= (parseInt(form.reorder_level, 10) || 5) && newQty > 0) {
-          showToast(`Low stock: ${form.name} (${newQty} ${form.unit} left)`);
+          showToast(`Low stock: ${cleanText(form.name || '')} (${newQty} ${form.unit} left)`);
         }
       } else {
         const { data, error } = await supabase
@@ -282,9 +284,9 @@ export default function StockScreen() {
       await fetchAll();
 
       if (newQty <= adjProduct.reorder_level && newQty > 0) {
-        showToast(`Low stock: ${adjProduct.name} (${newQty} ${adjProduct.unit} left)`);
+        showToast(`Low stock: ${cleanText(adjProduct.name || '')} (${newQty} ${adjProduct.unit} left)`);
       } else if (newQty === 0) {
-        showToast(`Out of stock: ${adjProduct.name}`);
+        showToast(`Out of stock: ${cleanText(adjProduct.name || '')}`);
       }
     } catch (error) {
       Alert.alert('Error', error.message);
@@ -302,10 +304,12 @@ export default function StockScreen() {
     setCategorySaving(true);
 
     try {
+      const cleanedCategoryName = cleanText(categoryName.trim());
+
       if (editingCategory) {
         const { error } = await supabase
           .from('categories')
-          .update({ name: categoryName.trim() })
+          .update({ name: cleanedCategoryName })
           .eq('id', editingCategory.id);
 
         if (error) throw error;
@@ -314,7 +318,7 @@ export default function StockScreen() {
           .from('categories')
           .insert({
             business_id: profile.business_id,
-            name: categoryName.trim(),
+            name: cleanedCategoryName,
           });
 
         if (error) throw error;
@@ -331,7 +335,7 @@ export default function StockScreen() {
   };
 
   const removeCategory = (category) => {
-    Alert.alert('Delete Category', `Delete "${category.name}"?`, [
+    Alert.alert('Delete Category', `Delete "${cleanText(category.name || '')}"?`, [
       { text: 'Cancel' },
       {
         text: 'Delete',
@@ -407,7 +411,7 @@ export default function StockScreen() {
           const category = id === 'all' ? { name: 'All' } : categories.find((entry) => entry.id === id);
           return (
             <TouchableOpacity key={id} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: catFilter === id ? colors.secondary : colors.card, borderWidth: 1, borderColor: catFilter === id ? colors.secondary : colors.border, marginRight: 8 }} onPress={() => setCatFilter(id)}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: catFilter === id ? '#fff' : colors.textLight }}>{category?.name}</Text>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: catFilter === id ? '#fff' : colors.textLight }}>{cleanText(category?.name || '')}</Text>
             </TouchableOpacity>
           );
         })}
@@ -435,12 +439,12 @@ export default function StockScreen() {
           <View style={{ backgroundColor: colors.card, borderRadius: 14, padding: 14, marginBottom: 8, flexDirection: 'row', borderLeftWidth: 4, borderLeftColor: item.quantity === 0 ? colors.danger : item.quantity <= item.reorder_level ? colors.warning : colors.border }}>
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, flex: 1 }}>{item.name}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, flex: 1 }}>{cleanText(item.name || '')}</Text>
                 {item.quantity === 0 && <View style={{ backgroundColor: colors.danger + '20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}><Text style={{ color: colors.danger, fontSize: 9, fontWeight: '700' }}>OUT</Text></View>}
                 {item.quantity > 0 && item.quantity <= item.reorder_level && <View style={{ backgroundColor: colors.warning + '20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}><Text style={{ color: colors.warning, fontSize: 9, fontWeight: '700' }}>LOW</Text></View>}
               </View>
               {item.sku ? <Text style={{ fontSize: 11, color: colors.textLight }}>SKU: {item.sku}</Text> : null}
-              <Text style={{ fontSize: 11, color: colors.secondary, fontWeight: '600' }}>{item.categories?.name || 'Uncategorised'}</Text>
+              <Text style={{ fontSize: 11, color: colors.secondary, fontWeight: '600' }}>{cleanText(item.categories?.name || 'Uncategorised')}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
                 <Text style={{ fontSize: 14, fontWeight: '800', color: colors.text }}>{fmt(item.selling_price)}</Text>
                 <Text style={{ fontSize: 11, color: colors.textLight }}>Cost: {fmt(item.cost_price)}</Text>
@@ -457,12 +461,12 @@ export default function StockScreen() {
                   </TouchableOpacity>
                 )}
                 {hasPermission('edit_stock') && (
-                  <TouchableOpacity style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }} onPress={() => { setForm({ name: item.name, sku: item.sku || '', cost_price: String(item.cost_price), selling_price: String(item.selling_price), quantity: String(item.quantity), reorder_level: String(item.reorder_level || 5), category_id: item.category_id || '', unit: item.unit || 'pcs', description: item.description || '' }); setEditProduct(item); setModalVisible(true); }}>
+                  <TouchableOpacity style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }} onPress={() => { setForm({ name: cleanText(item.name || ''), sku: cleanText(item.sku || ''), cost_price: String(item.cost_price), selling_price: String(item.selling_price), quantity: String(item.quantity), reorder_level: String(item.reorder_level || 5), category_id: item.category_id || '', unit: cleanText(item.unit || 'pcs'), description: cleanText(item.description || '') }); setEditProduct(item); setModalVisible(true); }}>
                     <Ionicons name="pencil" size={16} color={colors.warning} />
                   </TouchableOpacity>
                 )}
                 {hasPermission('delete_stock') && (
-                  <TouchableOpacity style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }} onPress={() => Alert.alert('Delete', `Delete "${item.name}"?`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => {
+                  <TouchableOpacity style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }} onPress={() => Alert.alert('Delete', `Delete "${cleanText(item.name || '')}"?`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => {
                     try {
                       const { error } = await supabase.from('products').update({ is_active: false }).eq('id', item.id);
                       if (error) throw error;
@@ -519,7 +523,7 @@ export default function StockScreen() {
                 </TouchableOpacity>
                 {categories.map((category) => (
                   <TouchableOpacity key={category.id} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: form.category_id === category.id ? colors.secondary : colors.bg, borderWidth: 1, borderColor: form.category_id === category.id ? colors.secondary : colors.border, marginRight: 8 }} onPress={() => setForm({ ...form, category_id: category.id })}>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: form.category_id === category.id ? '#fff' : colors.textLight }}>{category.name}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: form.category_id === category.id ? '#fff' : colors.textLight }}>{cleanText(category.name || '')}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
@@ -539,7 +543,7 @@ export default function StockScreen() {
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>Adjust Stock</Text>
               <TouchableOpacity onPress={() => setAdjModal(false)}><Ionicons name="close" size={24} color={colors.text} /></TouchableOpacity>
             </View>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{adjProduct?.name}</Text>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{cleanText(adjProduct?.name || '')}</Text>
             <Text style={{ fontSize: 13, color: colors.textLight, marginBottom: 14 }}>Current: {adjProduct?.quantity} {adjProduct?.unit}</Text>
             <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
               {['add', 'remove'].map((type) => (
@@ -582,9 +586,9 @@ export default function StockScreen() {
               ) : categories.map((category) => (
                 <View key={category.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{category.name}</Text>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{cleanText(category.name || '')}</Text>
                   </View>
-                  <TouchableOpacity style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', marginRight: 8 }} onPress={() => { setEditingCategory(category); setCategoryName(category.name); }}>
+                  <TouchableOpacity style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', marginRight: 8 }} onPress={() => { setEditingCategory(category); setCategoryName(cleanText(category.name || '')); }}>
                     <Ionicons name="pencil" size={16} color={colors.warning} />
                   </TouchableOpacity>
                   <TouchableOpacity style={{ width: 34, height: 34, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }} onPress={() => removeCategory(category)}>

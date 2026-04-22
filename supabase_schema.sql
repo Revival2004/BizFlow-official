@@ -455,7 +455,313 @@ create trigger trigger_low_stock
   for each row execute function public.check_low_stock();
 
 -- ============================================================
--- 7. REALTIME PUBLICATION
+-- 7. ATOMIC SALES AND VOIDS
+-- ============================================================
+
+create or replace function public.process_sale(
+  p_business_id       uuid,
+  p_reference_number  text,
+  p_sold_by           uuid,
+  p_customer_name     text,
+  p_customer_phone    text,
+  p_total_amount      numeric,
+  p_cost_total        numeric,
+  p_profit            numeric,
+  p_payment_method    text,
+  p_amount_tendered   numeric,
+  p_change_given      numeric,
+  p_notes             text,
+  p_items             jsonb
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sale_id        uuid;
+  v_item           jsonb;
+  v_product        record;
+  v_product_id     uuid;
+  v_quantity       integer;
+  v_items_count    integer := 0;
+  v_unit_price     numeric := 0;
+  v_cost_price     numeric := 0;
+  v_total_price    numeric := 0;
+  v_profit         numeric := 0;
+  v_discount       numeric := 0;
+  v_product_name   text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if p_sold_by is distinct from auth.uid() then
+    raise exception 'You can only create sales as the signed-in user';
+  end if;
+
+  if p_business_id is distinct from public.my_business_id() then
+    raise exception 'Sale business does not match your account';
+  end if;
+
+  if not public.has_permission('create_sale') then
+    raise exception 'You do not have permission to create sales';
+  end if;
+
+  if p_items is null or jsonb_typeof(p_items) <> 'array' then
+    raise exception 'Sale must include at least one item';
+  end if;
+
+  if jsonb_array_length(p_items) = 0 then
+    raise exception 'Sale must include at least one item';
+  end if;
+
+  select coalesce(sum(coalesce((item->>'quantity')::integer, 0)), 0)
+  into v_items_count
+  from jsonb_array_elements(p_items) item;
+
+  if v_items_count <= 0 then
+    raise exception 'Sale items must have a positive quantity';
+  end if;
+
+  begin
+    insert into public.sales(
+      business_id,
+      reference_number,
+      sold_by,
+      customer_name,
+      customer_phone,
+      total_amount,
+      cost_total,
+      profit,
+      payment_method,
+      amount_tendered,
+      change_given,
+      status,
+      items_count,
+      notes
+    ) values (
+      p_business_id,
+      p_reference_number,
+      p_sold_by,
+      nullif(trim(coalesce(p_customer_name, '')), ''),
+      nullif(trim(coalesce(p_customer_phone, '')), ''),
+      coalesce(p_total_amount, 0),
+      coalesce(p_cost_total, 0),
+      coalesce(p_profit, 0),
+      coalesce(p_payment_method, 'cash'),
+      coalesce(p_amount_tendered, 0),
+      coalesce(p_change_given, 0),
+      'completed',
+      v_items_count,
+      nullif(trim(coalesce(p_notes, '')), '')
+    )
+    returning id into v_sale_id;
+
+    for v_item in select * from jsonb_array_elements(p_items)
+    loop
+      v_product_id := (v_item->>'product_id')::uuid;
+      v_quantity := coalesce((v_item->>'quantity')::integer, 0);
+      v_unit_price := coalesce((v_item->>'unit_price')::numeric, 0);
+      v_cost_price := coalesce((v_item->>'cost_price')::numeric, 0);
+      v_total_price := coalesce((v_item->>'total_price')::numeric, v_unit_price * v_quantity);
+      v_profit := coalesce((v_item->>'profit')::numeric, v_total_price - (v_cost_price * v_quantity));
+      v_discount := coalesce((v_item->>'discount')::numeric, 0);
+
+      if v_quantity <= 0 then
+        raise exception 'Invalid quantity for sale item';
+      end if;
+
+      select id, business_id, name, quantity
+      into v_product
+      from public.products
+      where id = v_product_id
+        and business_id = p_business_id
+        and is_active = true
+      for update;
+
+      if not found then
+        raise exception 'Product not found or inactive';
+      end if;
+
+      if v_product.quantity < v_quantity then
+        raise exception 'Insufficient stock for product %. Available: %, Requested: %',
+          v_product.name, v_product.quantity, v_quantity;
+      end if;
+
+      v_product_name := coalesce(nullif(trim(v_item->>'product_name'), ''), v_product.name);
+
+      update public.products
+      set quantity = v_product.quantity - v_quantity
+      where id = v_product.id;
+
+      insert into public.sale_items(
+        sale_id,
+        product_id,
+        product_name,
+        quantity,
+        unit_price,
+        cost_price,
+        total_price,
+        profit,
+        discount
+      ) values (
+        v_sale_id,
+        v_product.id,
+        v_product_name,
+        v_quantity,
+        v_unit_price,
+        v_cost_price,
+        v_total_price,
+        v_profit,
+        v_discount
+      );
+
+      insert into public.stock_movements(
+        product_id,
+        business_id,
+        type,
+        quantity,
+        reference,
+        performed_by,
+        notes
+      ) values (
+        v_product.id,
+        p_business_id,
+        'sale',
+        -v_quantity,
+        p_reference_number,
+        p_sold_by,
+        'Sale: ' || p_reference_number
+      );
+    end loop;
+
+    return json_build_object(
+      'success', true,
+      'sale_id', v_sale_id,
+      'reference_number', p_reference_number
+    );
+  exception when others then
+    return json_build_object(
+      'success', false,
+      'error', SQLERRM
+    );
+  end;
+end;
+$$;
+
+create or replace function public.void_sale_atomic(
+  p_sale_id       uuid,
+  p_voided_by     uuid,
+  p_void_reason   text
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sale           public.sales%rowtype;
+  v_item           public.sale_items%rowtype;
+  v_product_qty    integer;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if p_voided_by is distinct from auth.uid() then
+    raise exception 'You can only void sales as the signed-in user';
+  end if;
+
+  if not public.has_permission('void_sale') then
+    raise exception 'You do not have permission to void sales';
+  end if;
+
+  begin
+    select *
+    into v_sale
+    from public.sales
+    where id = p_sale_id
+      and business_id = public.my_business_id()
+    for update;
+
+    if not found then
+      raise exception 'Sale not found';
+    end if;
+
+    if v_sale.status <> 'completed' then
+      raise exception 'Can only void completed sales. Current status: %', v_sale.status;
+    end if;
+
+    update public.sales
+    set status = 'voided',
+        voided_by = p_voided_by,
+        voided_at = now(),
+        void_reason = nullif(trim(coalesce(p_void_reason, '')), '')
+    where id = p_sale_id;
+
+    for v_item in
+      select *
+      from public.sale_items
+      where sale_id = p_sale_id
+      order by created_at asc
+    loop
+      select quantity
+      into v_product_qty
+      from public.products
+      where id = v_item.product_id
+        and business_id = v_sale.business_id
+      for update;
+
+      if not found then
+        raise exception 'Product for sale item no longer exists';
+      end if;
+
+      update public.products
+      set quantity = v_product_qty + v_item.quantity
+      where id = v_item.product_id;
+
+      insert into public.stock_movements(
+        product_id,
+        business_id,
+        type,
+        quantity,
+        reference,
+        performed_by,
+        notes
+      ) values (
+        v_item.product_id,
+        v_sale.business_id,
+        'void',
+        v_item.quantity,
+        v_sale.reference_number,
+        p_voided_by,
+        case
+          when nullif(trim(coalesce(p_void_reason, '')), '') is null then 'Void: ' || v_sale.reference_number
+          else 'Void: ' || v_sale.reference_number || ' - ' || trim(p_void_reason)
+        end
+      );
+    end loop;
+
+    return json_build_object(
+      'success', true,
+      'sale_id', p_sale_id,
+      'message', 'Sale voided and stock restored'
+    );
+  exception when others then
+    return json_build_object(
+      'success', false,
+      'error', SQLERRM
+    );
+  end;
+end;
+$$;
+
+grant execute on function public.process_sale(uuid, text, uuid, text, text, numeric, numeric, numeric, text, numeric, numeric, text, jsonb) to authenticated;
+grant execute on function public.void_sale_atomic(uuid, uuid, text) to authenticated;
+
+-- ============================================================
+-- 8. REALTIME PUBLICATION
 -- ============================================================
 do $$
 begin
@@ -526,7 +832,7 @@ begin
 end $$;
 
 -- ============================================================
--- 8. BOOTSTRAP FUNCTION
+-- 9. BOOTSTRAP FUNCTION
 -- Run this manually ONCE after your first admin signup
 -- ============================================================
 
@@ -596,7 +902,7 @@ begin
 end; $$;
 
 -- ============================================================
--- 9. GRANT PERMISSIONS
+-- 10. GRANT PERMISSIONS
 -- ============================================================
 grant usage on schema public to anon, authenticated;
 grant all on all tables in schema public to anon, authenticated;

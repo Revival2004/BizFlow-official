@@ -13,6 +13,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
 import { saveOfflineSale, cacheProducts, getCachedProducts, syncOfflineData } from '../../utils/offline';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
+import { cleanObject, cleanText } from '../../utils/textEncoding';
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -130,7 +131,7 @@ export default function NewSaleScreen({ navigation }) {
       if (offlineOverride) {
         const cached = await getCachedProducts();
         if (cached) {
-          setProducts(cached);
+          setProducts(cleanObject(cached));
           return;
         }
       }
@@ -146,12 +147,13 @@ export default function NewSaleScreen({ navigation }) {
         throw error;
       }
 
-      setProducts(data || []);
-      await cacheProducts(data || []);
+      const cleanedProducts = cleanObject(data || []);
+      setProducts(cleanedProducts);
+      await cacheProducts(cleanedProducts);
     } catch {
       const cached = await getCachedProducts();
       if (cached) {
-        setProducts(cached);
+        setProducts(cleanObject(cached));
       }
     } finally {
       setLoading(false);
@@ -172,14 +174,17 @@ export default function NewSaleScreen({ navigation }) {
     onChange: () => fetchProducts(false),
   });
 
+  const searchTerm = cleanText(search || '').toLowerCase();
   const filtered = products.filter((product) =>
-    product.name.toLowerCase().includes(search.toLowerCase()) ||
-    (product.sku && product.sku.toLowerCase().includes(search.toLowerCase()))
+    cleanText(product.name || '').toLowerCase().includes(searchTerm) ||
+    cleanText(product.sku || '').toLowerCase().includes(searchTerm)
   );
 
   const addToCart = (product) => {
+    const productName = cleanText(product.name || 'This product');
+
     if (product.quantity === 0) {
-      Alert.alert('Out of Stock', `${product.name} is out of stock.`);
+      Alert.alert('Out of Stock', `${productName} is out of stock.`);
       return;
     }
 
@@ -195,7 +200,7 @@ export default function NewSaleScreen({ navigation }) {
     }
 
     if (product.quantity <= product.reorder_level + 2) {
-      showToast(`Low stock: ${product.name} (${product.quantity} left)`);
+      showToast(`Low stock: ${productName} (${product.quantity} left)`);
     }
   };
 
@@ -236,12 +241,14 @@ export default function NewSaleScreen({ navigation }) {
 
     setProcessing(true);
     const ref = `SALE-${Date.now().toString().slice(-8)}`;
+    const cleanedCustomerName = cleanText(customerName || '').trim();
 
     const salePayload = {
       reference_number: ref,
       business_id: profile.business_id,
       sold_by: profile.id,
-      customer_name: customerName || null,
+      customer_name: cleanedCustomerName || null,
+      customer_phone: null,
       total_amount: subtotal,
       cost_total: totalCost,
       profit,
@@ -250,16 +257,18 @@ export default function NewSaleScreen({ navigation }) {
       change_given: paymentMethod === 'cash' ? Math.max(0, change) : 0,
       status: 'completed',
       items_count: cart.reduce((sum, item) => sum + item.qty, 0),
+      notes: null,
     };
 
     const itemsPayload = cart.map((item) => ({
       product_id: item.id,
-      product_name: item.name,
+      product_name: cleanText(item.name || ''),
       quantity: item.qty,
       unit_price: item.selling_price,
       cost_price: item.cost_price,
       total_price: item.selling_price * item.qty,
       profit: (item.selling_price - item.cost_price) * item.qty,
+      discount: 0,
     }));
 
     try {
@@ -282,48 +291,28 @@ export default function NewSaleScreen({ navigation }) {
         return;
       }
 
-      const { data: saleData, error: saleError } = await supabase
-        .from('sales')
-        .insert(salePayload)
-        .select()
-        .single();
+      const { data: result, error: saleError } = await supabase.rpc('process_sale', {
+        p_business_id: profile.business_id,
+        p_reference_number: ref,
+        p_sold_by: profile.id,
+        p_customer_name: salePayload.customer_name,
+        p_customer_phone: salePayload.customer_phone,
+        p_total_amount: salePayload.total_amount,
+        p_cost_total: salePayload.cost_total,
+        p_profit: salePayload.profit,
+        p_payment_method: salePayload.payment_method,
+        p_amount_tendered: salePayload.amount_tendered,
+        p_change_given: salePayload.change_given,
+        p_notes: salePayload.notes,
+        p_items: itemsPayload,
+      });
 
       if (saleError) {
         throw saleError;
       }
 
-      const { error: itemsError } = await supabase
-        .from('sale_items')
-        .insert(itemsPayload.map((item) => ({ ...item, sale_id: saleData.id })));
-
-      if (itemsError) {
-        throw itemsError;
-      }
-
-      for (const item of cart) {
-        const { error: productError } = await supabase
-          .from('products')
-          .update({ quantity: item.quantity - item.qty })
-          .eq('id', item.id);
-
-        if (productError) {
-          throw productError;
-        }
-
-        const { error: movementError } = await supabase
-          .from('stock_movements')
-          .insert({
-            product_id: item.id,
-            business_id: profile.business_id,
-            type: 'sale',
-            quantity: -item.qty,
-            reference: ref,
-            performed_by: profile.id,
-          });
-
-        if (movementError) {
-          throw movementError;
-        }
+      if (!result?.success) {
+        throw new Error(result?.error || 'Sale could not be completed.');
       }
 
       for (const item of cart) {
@@ -397,7 +386,7 @@ export default function NewSaleScreen({ navigation }) {
               onPress={() => addToCart(item)}
               activeOpacity={0.7}
             >
-              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 4 }} numberOfLines={2}>{item.name}</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 4 }} numberOfLines={2}>{cleanText(item.name || '')}</Text>
               <Text style={{ fontSize: 15, fontWeight: '800', color: colors.secondary }}>{fmt(item.selling_price)}</Text>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
                 <Text style={{ fontSize: 10, color: item.quantity <= item.reorder_level ? colors.warning : colors.textLight }}>
@@ -429,7 +418,7 @@ export default function NewSaleScreen({ navigation }) {
             cart.map((item) => (
               <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border, gap: 4 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text }} numberOfLines={1}>{item.name}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text }} numberOfLines={1}>{cleanText(item.name || '')}</Text>
                   <Text style={{ fontSize: 11, color: colors.textLight }}>{fmt(item.selling_price)}</Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>

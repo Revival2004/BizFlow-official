@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
+import { cleanText } from './textEncoding';
 
 const QUEUE_KEY = 'offline_queue';
 const OFFLINE_SALES_KEY = 'offline_sales';
@@ -72,31 +73,42 @@ export const syncOfflineData = async (businessId, userId) => {
 
     for (const entry of unsynced) {
       try {
-        // Insert sale
-        const { data: saleData, error } = await supabase
-          .from('sales')
-          .insert({ ...entry.sale, business_id: businessId, sold_by: userId })
-          .select()
-          .single();
+        const sale = entry.sale || {};
+        const items = Array.isArray(entry.items) ? entry.items : [];
 
-        if (error) { failed++; continue; }
+        if (!sale.reference_number || items.length === 0) {
+          failed++;
+          continue;
+        }
 
-        // Insert items
-        const itemsWithSaleId = entry.items.map(i => ({ ...i, sale_id: saleData.id }));
-        await supabase.from('sale_items').insert(itemsWithSaleId);
+        const { data: result, error } = await supabase.rpc('process_sale', {
+          p_business_id: businessId,
+          p_reference_number: sale.reference_number,
+          p_sold_by: userId,
+          p_customer_name: cleanText(sale.customer_name || '') || null,
+          p_customer_phone: sale.customer_phone || null,
+          p_total_amount: Number(sale.total_amount || 0),
+          p_cost_total: Number(sale.cost_total || 0),
+          p_profit: Number(sale.profit || 0),
+          p_payment_method: sale.payment_method || 'cash',
+          p_amount_tendered: Number(sale.amount_tendered ?? sale.total_amount ?? 0),
+          p_change_given: Number(sale.change_given || 0),
+          p_notes: sale.notes || null,
+          p_items: items.map((item) => ({
+            product_id: item.product_id,
+            product_name: cleanText(item.product_name || item.name || ''),
+            quantity: Number(item.quantity || item.qty || 0),
+            unit_price: Number(item.unit_price || item.selling_price || 0),
+            cost_price: Number(item.cost_price || 0),
+            total_price: Number(item.total_price || 0),
+            profit: Number(item.profit || 0),
+            discount: Number(item.discount || 0),
+          })),
+        });
 
-        // Update stock
-        for (const item of entry.items) {
-          const { data: prod } = await supabase
-            .from('products')
-            .select('quantity')
-            .eq('id', item.product_id)
-            .single();
-          if (prod) {
-            await supabase.from('products')
-              .update({ quantity: Math.max(0, prod.quantity - item.quantity) })
-              .eq('id', item.product_id);
-          }
+        if (error || !result?.success) {
+          failed++;
+          continue;
         }
 
         entry.synced = true;
