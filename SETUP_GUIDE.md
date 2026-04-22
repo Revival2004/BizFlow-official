@@ -1,44 +1,47 @@
-# BizFlow — Complete Setup Guide
+# BizFlow Complete Setup Guide
 
 ## What You Have
 
-A fully functional multi-user business management app with:
-- POS-style sales screen (cart, cash/card/transfer, change calculator)
-- Stock management (products, categories, adjustments, low-stock alerts)
-- Sales history (filter by day/week/month, void sales)
-- Reports & analytics (revenue, profit, bar chart, top products)
-- Staff management (invite by email, role assignment, deactivate)
-- 5 roles: Admin, Sales Manager, Cashier, Stock Manager, Accountant
-- Invite-only access — no one enters without an invitation token
-- Deep link — email button opens the app directly to registration
-- Android APK + web browser (PC)
+BizFlow now supports two access layers:
+- Super admin control for you as the platform owner
+- Separate business admins for each client business
+
+What that means:
+- You can still run your own business inside BizFlow
+- You also control who is allowed to create a new client business
+- New client admins need a 30-day token from you
+- Staff inside each client business are still invited only by that business admin
+- One business cannot see another business's staff or data
 
 ---
 
-## PART 1 — SUPABASE SETUP (15 minutes)
+## Part 1 - Supabase Setup
 
 ### Step 1: Create a Supabase project
-1. Go to https://supabase.com and sign up (free)
-2. Click New Project, give it a name (e.g. "BizFlow"), set a database password
-3. Wait ~2 minutes for provisioning
+1. Go to https://supabase.com
+2. Create a new project
+3. Wait for provisioning to finish
 
-### Step 2: Run the SQL schema
-1. In Supabase dashboard → SQL Editor → New Query
-2. Open `supabase_schema.sql` from this project folder
-3. Copy the ENTIRE contents and paste into the SQL editor
-4. Click Run — you should see "Success. No rows returned"
+### Step 2: Run the latest schema
+1. Open Supabase Dashboard
+2. Go to SQL Editor
+3. Open `supabase_schema.sql` from this project
+4. Paste the whole file into SQL Editor
+5. Click Run
 
 Important:
-- The latest `supabase_schema.sql` now includes the atomic `process_sale()` and `void_sale_atomic()` RPC functions.
-- It also includes the Supabase Realtime publication setup used for live sync across devices.
-- If you already ran an older schema before, re-run the latest `supabase_schema.sql` once so your project picks up both updates.
+- This latest schema includes atomic sales RPCs
+- It also includes the super admin token system
+- It also includes the realtime publication setup
+- If you already ran an older schema, run the latest one again once
 
-### Step 3: Create your admin account
-1. Supabase dashboard → Authentication → Users → Add User → Create new user
-2. Enter your email and password → Create User
-3. Copy the User UID (looks like: a1b2c3d4-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+### Step 3: Create your owner admin account
+1. In Supabase, go to Authentication -> Users
+2. Add a new user with your email and password
+3. Copy that user's UID
 
-4. Back in SQL Editor, run this (replace all values):
+### Step 4: Bootstrap your business admin profile
+Run this in SQL Editor:
 
 ```sql
 select public.bootstrap_admin(
@@ -49,19 +52,30 @@ select public.bootstrap_admin(
 );
 ```
 
-You should see: {"success": true, "business_id": "...", "role_id": "..."}
+### Step 5: Promote yourself to super admin
+Run this once in SQL Editor:
 
-### Step 4: Get your API keys
-1. Supabase dashboard → Settings (gear icon) → API
-2. Copy the Project URL (https://xxxxxxxx.supabase.co)
-3. Copy the anon / public key (long string)
+```sql
+select public.promote_super_admin('PASTE_YOUR_USER_UID_HERE');
+```
+
+After this:
+- the profile email must be exactly `revivalthuranira@gmail.com`
+- your account can use the normal BizFlow business tabs
+- your account also gets the `Control` tab
+- only you can generate client onboarding tokens
+
+### Step 6: Get your API keys
+1. Go to Supabase -> Settings -> API
+2. Copy the Project URL
+3. Copy the anon/public key
 
 ---
 
-## PART 2 — CONFIGURE THE APP (2 minutes)
+## Part 2 - Configure the App
 
-### Step 5: Add your Supabase credentials
-Copy `.env.example` to `.env`, then fill in:
+### Step 7: Add your Supabase credentials
+Copy `.env.example` to `.env`, then set:
 
 ```bash
 EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_ID.supabase.co
@@ -70,86 +84,125 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_ANON_KEY
 
 ---
 
-## PART 3 — BUILD THE APK (Android)
+## Part 3 - Build the APK
 
-### Step 6: Install prerequisites
+### Step 8: Install prerequisites
 ```bash
 npm install -g eas-cli expo-cli
 ```
 
-Sign up at https://expo.dev (free), then:
+Then log in:
+
 ```bash
 eas login
 ```
 
-### Step 7: Install project dependencies
+### Step 9: Install dependencies
 ```bash
 cd BizFlow
 npm install
 ```
 
-### Step 8: Configure and build
-This project already includes `eas.json` with an APK profile.
-
-Make sure you are logged in to Expo:
-```bash
-eas login
-```
-
-For cloud builds, your `.env` file may not be available because it is gitignored. Set the public app values in EAS so the APK gets your Supabase config:
+### Step 10: Build the Android APK
 ```bash
 eas env:create --name EXPO_PUBLIC_SUPABASE_URL --value https://YOUR_PROJECT_ID.supabase.co --environment preview --visibility plaintext
 eas env:create --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value YOUR_ANON_KEY --environment preview --visibility sensitive
-```
-
-Then build the installable APK:
-```bash
 eas build -p android --profile apk
 ```
 
-- Choose "Generate new keystore" when prompted
-- Wait ~10 minutes — Expo builds it in the cloud
-- Download the .apk from the link provided
+Notes:
+- choose "Generate new keystore" if asked
+- Expo builds in the cloud
+- download the APK when the build is done
 
-### Step 9: Install on Android
-1. Transfer the APK to the phone (USB, email, WhatsApp, etc.)
-2. Open the file on the phone
-3. Allow "Install from unknown sources" when prompted
-4. Install and open BizFlow
+### Step 11: Install on Android
+1. Move the APK to your phone
+2. Open it
+3. Allow unknown sources if Android asks
+4. Install BizFlow
 
 ---
 
-## PART 4 — PC / WEB ACCESS
+## Part 4 - Web Access
+
+Run:
 
 ```bash
 cd BizFlow
 npx expo start --web
 ```
 
-Open http://localhost:19006 in any browser. Staff on PC use it in their browser.
+For a static web build:
 
-For a permanent web deployment:
 ```bash
 npx expo export --platform web
-# Upload the 'dist' folder to Vercel or Netlify (both free)
 ```
 
 ---
 
-## PART 5 — EMAIL INVITATIONS
+## Part 5 - Super Admin Client Onboarding
 
-### Option A: Resend (recommended, free tier)
-1. Sign up at https://resend.com → create an API key
-2. Install Supabase CLI: `npm install -g supabase`
-3. Link your project:
+This is your new client control flow.
+
+### How you onboard a new client business
+1. Sign in using your super admin account
+2. Open the `Control` tab
+3. Generate a 30-day client token
+4. Share the token or the app link with the client
+5. The client opens BizFlow and taps `Register`
+6. The client enters the token
+7. BizFlow creates that client's business admin account
+
+Important:
+- the APK by itself is not enough
+- no new client business can be created without your token
+- each token is single-use
+- each token expires after 30 days
+
+### How you stay in control
+From the `Control` tab you can:
+- generate client tokens
+- view client businesses
+- suspend a business
+- reactivate a business
+
+If you suspend a business:
+- that business can no longer use the app after sign-in refresh
+- their staff stay isolated inside that business
+- other businesses are unaffected
+
+---
+
+## Part 6 - Staff Invitations Inside Each Business
+
+After a client admin creates their business:
+1. They sign in
+2. They open the `Staff` tab
+3. They invite their own staff
+4. Those staff join only that business
+
+What stays private:
+- one client admin cannot see another business
+- one business cannot see another business's staff
+- you manage businesses, not their daily staff list
+
+---
+
+## Part 7 - Email Invitations For Staff
+
+### Option A: Resend
+1. Create a Resend account and API key
+2. Install Supabase CLI
+3. Link your Supabase project
+4. Set secrets
+5. Deploy the invite email function
+
+Commands:
+
 ```bash
+npm install -g supabase
 supabase login
 supabase link --project-ref YOUR_PROJECT_REF
-```
-(Find project ref in Supabase → Settings → General)
-
-4. Set secrets and deploy the function:
-```bash
 supabase secrets set RESEND_API_KEY=re_your_key_here
 supabase secrets set RESEND_FROM_EMAIL="BizFlow <noreply@yourdomain.com>"
 supabase secrets set PUBLIC_WEB_URL=https://your-web-url.example.com
@@ -157,118 +210,72 @@ supabase secrets set APP_SCHEME=bizflow
 supabase functions deploy send-invite-email
 ```
 
-5. Optional but useful checks:
-```bash
-supabase secrets list
-supabase functions list
+### Option B: Manual
+If email is not ready yet:
+1. Create the staff invite in the app
+2. Open Supabase Table Editor -> `invitations`
+3. Copy the token
+4. Send this link manually:
+
+```text
+bizflow://register?token=THE_TOKEN
 ```
 
-What the app does now:
-- If email is configured correctly, Staff → Invite shows a real "Invitation Sent" success.
-- If email is not configured yet, the invite is still saved and the app shows a manual share screen with the invite link.
-- Pending invites can be re-shared any time from the Invites tab.
+---
 
-### Option B: Manual (no email setup)
-Invitations are still saved to the database. After creating an invite in Staff screen:
-1. Go to Supabase → Table Editor → invitations
-2. Copy the token for the pending invite
-3. Send this link to the person: `bizflow://register?token=THE_TOKEN`
+## Access Summary
+
+Client admin flow:
+1. Super admin generates token
+2. Client admin verifies token on Register screen
+3. BizFlow creates their business admin account
+4. That admin sees only their own business
+
+Staff flow:
+1. Business admin invites staff
+2. Staff verifies invitation token
+3. Staff joins only that business
 
 ---
 
-## HOW THE INVITE FLOW WORKS
+## First Run Checklist
 
-1. Admin opens Staff tab → Invite → enters email → picks role → Send
-2. App creates a unique token, saves invitation to database, sends email
-3. Staff receives email with "Open BizFlow & Register" button
-4. Tapping the button opens the BizFlow app via deep link (bizflow://register?token=XXX)
-5. Registration screen verifies the token — email is pre-filled, role is set
-6. Staff enters name + password → account created
-7. They log in and see only the features their role allows
-
-Security:
-- Tokens are random and unguessable (20+ characters)
-- Tokens expire after 48 hours
-- Each token works only once
-- Even with the APK, no one can enter without a valid invite
-- Admin can revoke any pending invitation
+- [ ] Run the latest `supabase_schema.sql`
+- [ ] Bootstrap your owner admin account
+- [ ] Promote that same account to super admin
+- [ ] Add `.env` values
+- [ ] Sign in and confirm the `Control` tab appears
+- [ ] Generate one test client token
+- [ ] Create one test client admin account
+- [ ] Sign in as that client and confirm they cannot see your business
+- [ ] Invite one staff member inside the client business
+- [ ] Process one test sale
 
 ---
 
-## ROLE PERMISSIONS REFERENCE
+## Troubleshooting
 
-Permission         | Admin | Sales Mgr | Cashier | Stock Mgr | Accountant
-View Dashboard     |  YES  |    YES    |   YES   |    YES    |    YES
-View Sales         |  YES  |    YES    |   YES   |    NO     |    YES
-Create Sale        |  YES  |    YES    |   YES   |    NO     |    NO
-Void Sale          |  YES  |    YES    |   NO    |    NO     |    NO
-View Stock         |  YES  |    YES    |   YES   |    YES    |    YES
-Add/Edit/Delete Stock|YES  |    NO     |   NO    |    YES    |    NO
-View Reports       |  YES  |    YES    |   NO    |    YES    |    YES
-View Profits       |  YES  |    YES    |   NO    |    NO     |    YES
-Invite Staff       |  YES  |    NO     |   NO    |    NO     |    NO
-Manage Staff       |  YES  |    NO     |   NO    |    NO     |    NO
-Manage Categories  |  YES  |    NO     |   NO    |    YES    |    NO
+### "Invalid token" on client registration
+- The token is wrong, revoked, used, or expired
+- Generate a fresh token from the `Control` tab
 
----
+### "Invalid invite" on staff registration
+- The staff invite token is wrong or expired
+- Check the `invitations` table and create a new invite
 
-## FIRST RUN CHECKLIST
+### App shows blank screen after login
+- The account may not have a profile yet
+- Re-check `bootstrap_admin()` or the client token registration flow
 
-- [ ] Open BizFlow, sign in with your admin email/password
-- [ ] Go to Stock → add a few products with cost + selling price
-- [ ] Go to Sales → process a test sale
-- [ ] Go to Staff → invite a team member
-- [ ] Check Reports after a few sales
+### Client can sign in but should be blocked
+- Check the `businesses.status` value
+- `active` means allowed
+- `suspended` means blocked
+
+### Changes do not update live across devices
+- Re-run the latest `supabase_schema.sql`
+- Make sure the realtime publication section has been applied
 
 ---
 
-## TROUBLESHOOTING
-
-"Invalid invite" on registration
-→ Token is wrong or expired. Admin sends a new invite.
-→ Check Supabase → invitations table → status should be 'pending'
-
-"Permission denied" errors
-→ Re-run the full supabase_schema.sql. Check the roles table has permissions JSON.
-
-App shows blank screen after login
-→ Profile wasn't created. Re-run bootstrap_admin() in SQL editor.
-
-Deep link doesn't open app
-→ APK must be installed first. On Android: Settings → Apps → BizFlow → verify it handles bizflow:// links.
-
-Email not arriving
-→ Check spam. Verify Edge Function deployed. Check Supabase → Functions → Logs.
-
-Changes do not update live across devices
--> Re-run the latest supabase_schema.sql in Supabase SQL Editor so the BizFlow tables are added to Supabase Realtime and the atomic sales RPCs are installed.
-
----
-
-## PROJECT FILES
-
-BizFlow/
-├── App.js                              Entry point
-├── app.json                            Expo config (deep link scheme: bizflow://)
-├── supabase_schema.sql                 PASTE INTO SUPABASE SQL EDITOR
-├── supabase/functions/send-invite-email/index.ts    Email edge function
-└── src/
-    ├── context/AuthContext.js          Auth state + hasPermission() helper
-    ├── navigation/AppNavigator.js      Tab navigation + deep link handling
-    ├── utils/
-    │   ├── supabase.js                 PUT YOUR KEYS HERE
-    │   └── constants.js               Colors, roles, all permissions
-    └── screens/
-        ├── auth/LoginScreen.js
-        ├── auth/RegisterScreen.js      Handles invite token from deep link
-        ├── admin/DashboardScreen.js    Stats cards + quick actions + recent sales
-        ├── admin/ProfileScreen.js      Edit name, change password, view permissions
-        ├── sales/NewSaleScreen.js      POS: product grid + cart + payment modal
-        ├── sales/SalesHistoryScreen.js Filter, view details, void
-        ├── stock/StockScreen.js        Add/edit products, adjust stock, categories
-        ├── reports/ReportsScreen.js    Revenue, profit, chart, top products
-        └── staff/StaffScreen.js        Staff list, invite modal, role changer
-
----
-
-BizFlow v1.0 — Built with Expo, React Native & Supabase
+BizFlow v1.0

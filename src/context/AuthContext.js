@@ -3,6 +3,7 @@ import { isSupabaseConfigured, supabase } from '../utils/supabase';
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh';
 
 const AuthContext = createContext({});
+const SUPER_ADMIN_EMAIL = 'revivalthuranira@gmail.com';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -28,20 +29,84 @@ export const AuthProvider = ({ children }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const fetchProfile = async (userId) => {
+  const loadProfile = async (userId, { persist = true } = {}) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*, roles(*)')
+        .select('*, roles(*), businesses(id, name, status)')
         .eq('id', userId)
-        .single();
-      if (!error) setProfile(data);
+        .maybeSingle();
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data) {
+        await supabase.auth.signOut();
+        if (persist) {
+          setProfile(null);
+        }
+
+        return {
+          data: null,
+          error: {
+            message: 'Your account is not approved yet. You need a valid admin token or staff invitation.',
+          },
+        };
+      }
+
+      if (data.status !== 'active') {
+        await supabase.auth.signOut();
+        if (persist) {
+          setProfile(null);
+        }
+
+        return {
+          data: null,
+          error: {
+            message: 'Your account is not active. Contact your business admin.',
+          },
+        };
+      }
+
+      if (data.businesses?.status && data.businesses.status !== 'active') {
+        await supabase.auth.signOut();
+        if (persist) {
+          setProfile(null);
+        }
+
+        return {
+          data: null,
+          error: {
+            message: 'This business has been suspended. Contact BizFlow support.',
+          },
+        };
+      }
+
+      if (persist) {
+        setProfile(data);
+      }
+
+      return { data, error: null };
     } catch (e) {
       console.error(e);
+      if (persist) {
+        setProfile(null);
+      }
+      return {
+        data: null,
+        error: {
+          message: e.message || 'Could not load your account.',
+        },
+      };
     } finally {
-      setLoading(false);
+      if (persist) {
+        setLoading(false);
+      }
     }
   };
+
+  const fetchProfile = async (userId) => loadProfile(userId, { persist: true });
 
   useRealtimeRefresh({
     enabled: Boolean(user?.id),
@@ -58,7 +123,15 @@ export const AuthProvider = ({ children }) => {
             event: '*',
             schema: 'public',
             table: 'roles',
-            filter: `id=eq.${profile.role_id}`,
+          filter: `id=eq.${profile.role_id}`,
+        }]
+        : []),
+      ...(profile?.business_id
+        ? [{
+            event: '*',
+            schema: 'public',
+            table: 'businesses',
+            filter: `id=eq.${profile.business_id}`,
           }]
         : []),
     ],
@@ -80,7 +153,21 @@ export const AuthProvider = ({ children }) => {
     }
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    return { data, error };
+    if (error) {
+      return { data, error };
+    }
+
+    const signedInUserId = data?.user?.id || data?.session?.user?.id;
+    if (!signedInUserId) {
+      return { data, error: null };
+    }
+
+    const profileResult = await loadProfile(signedInUserId, { persist: true });
+    if (profileResult.error) {
+      return { data: null, error: profileResult.error };
+    }
+
+    return { data, error: null };
   };
 
   const signOut = async () => {
@@ -95,9 +182,12 @@ export const AuthProvider = ({ children }) => {
   };
 
   const isAdmin = () => profile?.roles?.name === 'admin';
+  const isSuperAdmin = () =>
+    profile?.is_super_admin === true &&
+    profile?.email?.trim().toLowerCase() === SUPER_ADMIN_EMAIL;
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signOut, hasPermission, isAdmin, fetchProfile }}>
+    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signOut, hasPermission, isAdmin, isSuperAdmin, fetchProfile }}>
       {children}
     </AuthContext.Provider>
   );

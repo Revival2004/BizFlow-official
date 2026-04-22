@@ -19,6 +19,7 @@ import StockScreen from '../screens/stock/StockScreen';
 import ReportsScreen from '../screens/reports/ReportsScreen';
 import StaffScreen from '../screens/staff/StaffScreen';
 import ProfileScreen from '../screens/admin/ProfileScreen';
+import SuperAdminScreen from '../screens/admin/SuperAdminScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -48,7 +49,7 @@ function SalesStackScreen({ colors }) {
 }
 
 function MainTabs() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, isSuperAdmin } = useAuth();
   const { colors, isDark } = useTheme();
 
   return (
@@ -57,6 +58,7 @@ function MainTabs() {
         tabBarIcon: ({ focused, color }) => {
           const icons = {
             Dashboard: focused ? 'pie-chart' : 'pie-chart-outline',
+            Control: focused ? 'shield-checkmark' : 'shield-checkmark-outline',
             Sales: focused ? 'cart' : 'cart-outline',
             Stock: focused ? 'archive' : 'archive-outline',
             Reports: focused ? 'stats-chart' : 'stats-chart-outline',
@@ -83,6 +85,13 @@ function MainTabs() {
       })}
     >
       <Tab.Screen name="Dashboard" component={DashboardScreen} options={{ headerTitle: 'BizFlow', title: 'Home' }} />
+      {isSuperAdmin() && (
+        <Tab.Screen
+          name="Control"
+          component={SuperAdminScreen}
+          options={{ title: 'Control', headerTitle: 'Super Admin' }}
+        />
+      )}
       {hasPermission('view_sales') && (
         <Tab.Screen name="Sales" options={{ headerShown: false, title: 'Sales' }}>
           {() => <SalesStackScreen colors={colors} />}

@@ -87,12 +87,12 @@ export default function LoginScreen({ navigation }) {
 
           <TouchableOpacity onPress={() => navigation.navigate('Register')} style={styles.registerLink}>
             <Text style={styles.registerLinkText}>
-              Have an invitation? <Text style={styles.registerLinkBold}>Register here</Text>
+              Have a client token or staff invite? <Text style={styles.registerLinkBold}>Register here</Text>
             </Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.footer}>BizFlow v1.0 - Invite-only access</Text>
+        <Text style={styles.footer}>BizFlow v1.0 - Super-admin controlled access</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );

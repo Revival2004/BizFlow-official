@@ -8,7 +8,7 @@ import { supabase } from '../../utils/supabase';
 import { ROLE_PERMISSIONS } from '../../utils/constants';
 
 export default function ProfileScreen() {
-  const { profile, signOut, fetchProfile } = useAuth();
+  const { profile, signOut, fetchProfile, isSuperAdmin } = useAuth();
   const { colors, isDark, toggleTheme } = useTheme();
   const insets = useSafeAreaInsets();
   const [editName, setEditName] = useState(false);
@@ -138,6 +138,12 @@ export default function ProfileScreen() {
           <Ionicons name="shield-checkmark" size={13} color={colors.secondary} />
           <Text style={{ fontSize: 12, fontWeight: '700', color: colors.secondary }}>{profile?.roles?.name?.replace(/_/g, ' ').toUpperCase()}</Text>
         </View>
+        {isSuperAdmin() && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.warning + '15', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, marginTop: 8 }}>
+            <Ionicons name="key" size={13} color={colors.warning} />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.warning }}>SUPER ADMIN</Text>
+          </View>
+        )}
       </View>
 
       <Section title="Appearance">
@@ -196,6 +202,9 @@ export default function ProfileScreen() {
       <Section title="Account">
         <Row icon="calendar-outline" label="Joined" value={profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'} />
         <Row icon="checkmark-circle-outline" label="Status" value={profile?.status || 'active'} />
+        {isSuperAdmin() && (
+          <Row icon="shield-half-outline" label="Platform Access" value="Can generate client tokens and control business access" />
+        )}
       </Section>
 
       <TouchableOpacity

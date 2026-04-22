@@ -19,6 +19,11 @@ create table if not exists public.businesses (
   address     text,
   currency    text default 'GBP',
   logo_url    text,
+  status      text default 'active',
+  owner_name  text,
+  owner_email text,
+  owner_user_id uuid,
+  created_by  uuid,
   created_at  timestamptz default now(),
   updated_at  timestamptz default now()
 );
@@ -41,6 +46,7 @@ create table if not exists public.profiles (
   full_name   text not null,
   phone       text,
   status      text default 'active' check (status in ('active','inactive','suspended')),
+  is_super_admin boolean default false,
   invited_by  uuid,
   avatar_url  text,
   last_seen   timestamptz,
@@ -60,6 +66,22 @@ create table if not exists public.invitations (
   accepted_by  uuid,
   accepted_at  timestamptz,
   created_at   timestamptz default now()
+);
+
+-- Super-admin generated client access tokens
+create table if not exists public.client_access_tokens (
+  id               uuid primary key default uuid_generate_v4(),
+  token            text unique not null,
+  admin_email      text,
+  business_name    text,
+  notes            text,
+  status           text not null default 'active' check (status in ('active','used','revoked','expired')),
+  created_by       uuid,
+  used_by          uuid,
+  used_business_id uuid references public.businesses(id) on delete set null,
+  expires_at       timestamptz not null default (now() + interval '30 days'),
+  used_at          timestamptz,
+  created_at       timestamptz default now()
 );
 
 -- Categories
@@ -183,12 +205,37 @@ create index if not exists idx_stock_mov_product    on public.stock_movements(pr
 create index if not exists idx_profiles_business    on public.profiles(business_id);
 create index if not exists idx_invitations_token    on public.invitations(token);
 create index if not exists idx_invitations_email    on public.invitations(email);
+create index if not exists idx_businesses_status    on public.businesses(status);
+create index if not exists idx_access_tokens_status on public.client_access_tokens(status);
+create index if not exists idx_access_tokens_token  on public.client_access_tokens(token);
 
 -- Align existing projects with the app defaults.
 alter table public.businesses alter column currency set default 'KES';
+alter table public.businesses add column if not exists status text default 'active';
+alter table public.businesses add column if not exists owner_name text;
+alter table public.businesses add column if not exists owner_email text;
+alter table public.businesses add column if not exists owner_user_id uuid;
+alter table public.businesses add column if not exists created_by uuid;
+alter table public.profiles add column if not exists is_super_admin boolean default false;
+
+update public.businesses
+set status = 'active'
+where status is null;
+
+update public.profiles
+set is_super_admin = false
+where is_super_admin is null;
 
 do $$
 begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'businesses_status_check'
+  ) then
+    alter table public.businesses
+      add constraint businesses_status_check
+      check (status in ('active','suspended'));
+  end if;
+
   if not exists (
     select 1 from pg_constraint where conname = 'stock_movements_performed_by_fkey'
   ) then
@@ -223,6 +270,21 @@ returns uuid language sql stable security definer as $$
   select business_id from public.profiles where id = auth.uid()
 $$;
 
+create or replace function public.super_admin_email()
+returns text language sql stable security definer as $$
+  select 'revivalthuranira@gmail.com'::text
+$$;
+
+create or replace function public.is_super_admin()
+returns boolean language sql stable security definer as $$
+  select coalesce((
+    select p.is_super_admin
+      and lower(trim(coalesce(p.email, ''))) = public.super_admin_email()
+    from public.profiles p
+    where p.id = auth.uid()
+  ), false)
+$$;
+
 create or replace function public.my_role()
 returns text language sql stable security definer as $$
   select r.name
@@ -242,6 +304,365 @@ returns boolean language sql stable security definer as $$
   )
 $$;
 
+create or replace function public.create_default_roles(p_business_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_admin_role_id uuid;
+begin
+  insert into public.roles(business_id, name, permissions) values (p_business_id, 'admin',
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":true,"manage_staff":true,"invite_staff":true,"view_profits":true,"manage_categories":true}'
+  ) returning id into v_admin_role_id;
+
+  insert into public.roles(business_id, name, permissions) values (p_business_id, 'sales_manager',
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false}'
+  );
+
+  insert into public.roles(business_id, name, permissions) values (p_business_id, 'cashier',
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":false,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":false}'
+  );
+
+  insert into public.roles(business_id, name, permissions) values (p_business_id, 'stock_manager',
+    '{"view_dashboard":true,"view_sales":false,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":true}'
+  );
+
+  insert into public.roles(business_id, name, permissions) values (p_business_id, 'accountant',
+    '{"view_dashboard":true,"view_sales":true,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false}'
+  );
+
+  return v_admin_role_id;
+end;
+$$;
+
+create or replace function public.create_default_categories(p_business_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.categories(business_id, name, color, icon) values
+    (p_business_id, 'General',        '#3B5BDB', 'grid'),
+    (p_business_id, 'Food & Drinks',  '#37B24D', 'fast-food'),
+    (p_business_id, 'Electronics',    '#F59F00', 'phone-portrait'),
+    (p_business_id, 'Clothing',       '#E64980', 'shirt'),
+    (p_business_id, 'Health & Beauty','#7950F2', 'heart');
+end;
+$$;
+
+create or replace function public.generate_client_access_token(
+  p_admin_email text default null,
+  p_business_name text default null,
+  p_notes text default null
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_token text;
+  v_token_id uuid;
+  v_expires_at timestamptz := now() + interval '30 days';
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.is_super_admin() then
+    raise exception 'Only the super admin can generate client access tokens';
+  end if;
+
+  loop
+    v_token := 'BFLW-' ||
+      upper(substr(replace(uuid_generate_v4()::text, '-', ''), 1, 6)) || '-' ||
+      upper(substr(replace(uuid_generate_v4()::text, '-', ''), 7, 6));
+    exit when not exists (
+      select 1 from public.client_access_tokens where token = v_token
+    );
+  end loop;
+
+  insert into public.client_access_tokens(
+    token,
+    admin_email,
+    business_name,
+    notes,
+    status,
+    created_by,
+    expires_at
+  ) values (
+    v_token,
+    nullif(trim(coalesce(p_admin_email, '')), ''),
+    nullif(trim(coalesce(p_business_name, '')), ''),
+    nullif(trim(coalesce(p_notes, '')), ''),
+    'active',
+    auth.uid(),
+    v_expires_at
+  )
+  returning id into v_token_id;
+
+  return json_build_object(
+    'success', true,
+    'id', v_token_id,
+    'token', v_token,
+    'expires_at', v_expires_at,
+    'admin_email', nullif(trim(coalesce(p_admin_email, '')), ''),
+    'business_name', nullif(trim(coalesce(p_business_name, '')), '')
+  );
+end;
+$$;
+
+create or replace function public.verify_client_access_token(p_token text)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_token_record public.client_access_tokens%rowtype;
+begin
+  select *
+  into v_token_record
+  from public.client_access_tokens
+  where token = trim(coalesce(p_token, ''))
+  for update;
+
+  if not found then
+    return json_build_object(
+      'success', false,
+      'error', 'Token not found'
+    );
+  end if;
+
+  if v_token_record.status = 'revoked' then
+    return json_build_object(
+      'success', false,
+      'error', 'Token has been revoked'
+    );
+  end if;
+
+  if v_token_record.status = 'used' or v_token_record.used_at is not null then
+    return json_build_object(
+      'success', false,
+      'error', 'Token has already been used'
+    );
+  end if;
+
+  if v_token_record.expires_at <= now() then
+    update public.client_access_tokens
+    set status = 'expired'
+    where id = v_token_record.id;
+
+    return json_build_object(
+      'success', false,
+      'error', 'Token has expired'
+    );
+  end if;
+
+  return json_build_object(
+    'success', true,
+    'token', v_token_record.token,
+    'admin_email', v_token_record.admin_email,
+    'business_name', v_token_record.business_name,
+    'expires_at', v_token_record.expires_at
+  );
+end;
+$$;
+
+create or replace function public.register_admin_with_access_token(
+  p_token text,
+  p_user_id uuid,
+  p_email text,
+  p_full_name text,
+  p_business_name text
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_token_record public.client_access_tokens%rowtype;
+  v_business_id uuid;
+  v_admin_role_id uuid;
+  v_email text := lower(trim(coalesce(p_email, '')));
+  v_full_name text := trim(coalesce(p_full_name, ''));
+  v_business_name text := trim(coalesce(p_business_name, ''));
+begin
+  if p_user_id is null then
+    raise exception 'User ID is required';
+  end if;
+
+  if auth.uid() is not null and auth.uid() <> p_user_id then
+    raise exception 'You can only finish registration for your own account';
+  end if;
+
+  if v_email = '' then
+    raise exception 'Email is required';
+  end if;
+
+  if v_full_name = '' then
+    raise exception 'Full name is required';
+  end if;
+
+  select *
+  into v_token_record
+  from public.client_access_tokens
+  where token = trim(coalesce(p_token, ''))
+  for update;
+
+  if not found then
+    raise exception 'Token not found';
+  end if;
+
+  if v_token_record.status <> 'active' then
+    raise exception 'Token is not active';
+  end if;
+
+  if v_token_record.used_at is not null then
+    raise exception 'Token has already been used';
+  end if;
+
+  if v_token_record.expires_at <= now() then
+    update public.client_access_tokens
+    set status = 'expired'
+    where id = v_token_record.id;
+    raise exception 'Token has expired';
+  end if;
+
+  if v_token_record.admin_email is not null and lower(v_token_record.admin_email) <> v_email then
+    raise exception 'This token is locked to %', v_token_record.admin_email;
+  end if;
+
+  if exists (select 1 from public.profiles where id = p_user_id) then
+    raise exception 'This account has already been registered';
+  end if;
+
+  if v_business_name = '' then
+    v_business_name := trim(coalesce(v_token_record.business_name, ''));
+  end if;
+
+  if v_business_name = '' then
+    raise exception 'Business name is required';
+  end if;
+
+  insert into public.businesses(
+    name,
+    email,
+    status,
+    owner_name,
+    owner_email,
+    owner_user_id,
+    created_by
+  ) values (
+    v_business_name,
+    v_email,
+    'active',
+    v_full_name,
+    v_email,
+    p_user_id,
+    v_token_record.created_by
+  )
+  returning id into v_business_id;
+
+  v_admin_role_id := public.create_default_roles(v_business_id);
+
+  insert into public.profiles(
+    id,
+    business_id,
+    role_id,
+    email,
+    full_name,
+    status,
+    is_super_admin
+  ) values (
+    p_user_id,
+    v_business_id,
+    v_admin_role_id,
+    v_email,
+    v_full_name,
+    'active',
+    false
+  );
+
+  perform public.create_default_categories(v_business_id);
+
+  update public.client_access_tokens
+  set status = 'used',
+      used_by = p_user_id,
+      used_business_id = v_business_id,
+      used_at = now()
+  where id = v_token_record.id;
+
+  return json_build_object(
+    'success', true,
+    'business_id', v_business_id,
+    'role_id', v_admin_role_id
+  );
+end;
+$$;
+
+create or replace function public.promote_super_admin(p_user_id uuid)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_target_email text;
+begin
+  if current_setting('request.jwt.claim.role', true) is not null and not public.is_super_admin() then
+    return json_build_object(
+      'success', false,
+      'error', 'Only SQL editor or an existing super admin can promote accounts'
+    );
+  end if;
+
+  select lower(trim(coalesce(email, '')))
+  into v_target_email
+  from public.profiles
+  where id = p_user_id;
+
+  if v_target_email is null then
+    return json_build_object(
+      'success', false,
+      'error', 'Profile not found'
+    );
+  end if;
+
+  if v_target_email <> public.super_admin_email() then
+    return json_build_object(
+      'success', false,
+      'error', 'Only revivalthuranira@gmail.com can be promoted to super admin'
+    );
+  end if;
+
+  update public.profiles
+  set is_super_admin = false
+  where is_super_admin = true
+    and id <> p_user_id;
+
+  update public.profiles
+  set is_super_admin = true
+  where id = p_user_id;
+
+  if not found then
+    return json_build_object(
+      'success', false,
+      'error', 'Profile not found'
+    );
+  end if;
+
+  return json_build_object(
+    'success', true,
+    'user_id', p_user_id
+  );
+end;
+$$;
+
 -- ============================================================
 -- 5. ROW LEVEL SECURITY
 -- ============================================================
@@ -249,6 +670,7 @@ alter table public.businesses       enable row level security;
 alter table public.roles            enable row level security;
 alter table public.profiles         enable row level security;
 alter table public.invitations      enable row level security;
+alter table public.client_access_tokens enable row level security;
 alter table public.categories       enable row level security;
 alter table public.products         enable row level security;
 alter table public.stock_movements  enable row level security;
@@ -267,10 +689,13 @@ end $$;
 
 -- BUSINESSES
 create policy "businesses_select" on public.businesses
-  for select using (id = public.my_business_id());
+  for select using (id = public.my_business_id() or public.is_super_admin());
 
 create policy "businesses_update" on public.businesses
-  for update using (id = public.my_business_id() and public.my_role() = 'admin');
+  for update using (
+    (id = public.my_business_id() and public.my_role() = 'admin')
+    or public.is_super_admin()
+  );
 
 -- ROLES
 create policy "roles_select" on public.roles
@@ -299,6 +724,13 @@ create policy "invitations_insert" on public.invitations
 
 create policy "invitations_update" on public.invitations
   for update using (true);
+
+-- CLIENT ACCESS TOKENS
+create policy "client_access_tokens_select" on public.client_access_tokens
+  for select using (public.is_super_admin());
+
+create policy "client_access_tokens_update" on public.client_access_tokens
+  for update using (public.is_super_admin());
 
 -- CATEGORIES
 create policy "categories_select" on public.categories
@@ -828,6 +1260,13 @@ begin
     ) then
       alter publication supabase_realtime add table public.sale_items;
     end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'client_access_tokens'
+    ) then
+      alter publication supabase_realtime add table public.client_access_tokens;
+    end if;
   end if;
 end $$;
 
@@ -847,52 +1286,28 @@ declare
   v_biz_id   uuid;
   v_role_id  uuid;
 begin
+  if current_setting('request.jwt.claim.role', true) is not null and not public.is_super_admin() then
+    return json_build_object('error', 'Only SQL editor or super admin can run bootstrap_admin');
+  end if;
+
   -- Guard: don't run if user already has a profile
   if exists (select 1 from public.profiles where id = p_user_id) then
     return json_build_object('error', 'User already bootstrapped');
   end if;
 
   -- Create business
-  insert into public.businesses(name, email)
-  values (p_biz_name, p_email)
+  insert into public.businesses(name, email, status, owner_name, owner_email, owner_user_id, created_by)
+  values (p_biz_name, p_email, 'active', p_full_name, p_email, p_user_id, p_user_id)
   returning id into v_biz_id;
 
-  -- Admin role
-  insert into public.roles(business_id, name, permissions) values (v_biz_id, 'admin',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":true,"manage_staff":true,"invite_staff":true,"view_profits":true,"manage_categories":true}'
-  ) returning id into v_role_id;
-
-  -- Sales Manager role
-  insert into public.roles(business_id, name, permissions) values (v_biz_id, 'sales_manager',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false}'
-  );
-
-  -- Cashier role
-  insert into public.roles(business_id, name, permissions) values (v_biz_id, 'cashier',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":false,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":false}'
-  );
-
-  -- Stock Manager role
-  insert into public.roles(business_id, name, permissions) values (v_biz_id, 'stock_manager',
-    '{"view_dashboard":true,"view_sales":false,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":true}'
-  );
-
-  -- Accountant role
-  insert into public.roles(business_id, name, permissions) values (v_biz_id, 'accountant',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false}'
-  );
+  v_role_id := public.create_default_roles(v_biz_id);
 
   -- Admin profile
-  insert into public.profiles(id, business_id, role_id, email, full_name, status)
-  values (p_user_id, v_biz_id, v_role_id, p_email, p_full_name, 'active');
+  insert into public.profiles(id, business_id, role_id, email, full_name, status, is_super_admin)
+  values (p_user_id, v_biz_id, v_role_id, p_email, p_full_name, 'active', false);
 
   -- Default categories
-  insert into public.categories(business_id, name, color, icon) values
-    (v_biz_id, 'General',        '#3B5BDB', 'grid'),
-    (v_biz_id, 'Food & Drinks',  '#37B24D', 'fast-food'),
-    (v_biz_id, 'Electronics',    '#F59F00', 'phone-portrait'),
-    (v_biz_id, 'Clothing',       '#E64980', 'shirt'),
-    (v_biz_id, 'Health & Beauty','#7950F2', 'heart');
+  perform public.create_default_categories(v_biz_id);
 
   return json_build_object(
     'success', true,
@@ -908,6 +1323,13 @@ grant usage on schema public to anon, authenticated;
 grant all on all tables in schema public to anon, authenticated;
 grant all on all sequences in schema public to anon, authenticated;
 grant execute on all functions in schema public to anon, authenticated;
+revoke execute on function public.create_default_roles(uuid) from anon, authenticated;
+revoke execute on function public.create_default_categories(uuid) from anon, authenticated;
+revoke execute on function public.bootstrap_admin(uuid, text, text, text) from anon, authenticated;
+revoke execute on function public.promote_super_admin(uuid) from anon, authenticated;
+grant execute on function public.register_admin_with_access_token(text, uuid, text, text, text) to anon, authenticated;
+grant execute on function public.verify_client_access_token(text) to anon, authenticated;
+grant execute on function public.generate_client_access_token(text, text, text) to authenticated;
 
 -- ============================================================
 -- ALL DONE. Next: follow the setup guide.
