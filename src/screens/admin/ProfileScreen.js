@@ -8,12 +8,15 @@ import { supabase } from '../../utils/supabase';
 import { ROLE_PERMISSIONS } from '../../utils/constants';
 
 export default function ProfileScreen() {
-  const { profile, signOut, fetchProfile, isSuperAdmin } = useAuth();
+  const { profile, signOut, fetchProfile, isSuperAdmin, isAdmin } = useAuth();
   const { colors, isDark, toggleTheme } = useTheme();
   const insets = useSafeAreaInsets();
   const [editName, setEditName] = useState(false);
   const [name, setName] = useState(profile?.full_name || '');
+  const [editBusinessName, setEditBusinessName] = useState(false);
+  const [businessName, setBusinessName] = useState(profile?.businesses?.display_name || profile?.businesses?.name || '');
   const [saving, setSaving] = useState(false);
+  const [savingBusinessName, setSavingBusinessName] = useState(false);
   const [changingPass, setChangingPass] = useState(false);
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
@@ -21,6 +24,10 @@ export default function ProfileScreen() {
   useEffect(() => {
     setName(profile?.full_name || '');
   }, [profile?.full_name]);
+
+  useEffect(() => {
+    setBusinessName(profile?.businesses?.display_name || profile?.businesses?.name || '');
+  }, [profile?.businesses?.display_name, profile?.businesses?.name]);
 
   const saveProfile = async () => {
     if (!name.trim()) {
@@ -78,9 +85,43 @@ export default function ProfileScreen() {
     }
   };
 
+  const saveBusinessName = async () => {
+    const nextBusinessName = businessName.trim();
+    if (!profile?.business_id) {
+      return;
+    }
+
+    if (!nextBusinessName) {
+      Alert.alert('Error', 'Business name cannot be empty.');
+      return;
+    }
+
+    setSavingBusinessName(true);
+
+    try {
+      const { error } = await supabase
+        .from('businesses')
+        .update({ display_name: nextBusinessName })
+        .eq('id', profile.business_id);
+
+      if (error) {
+        throw error;
+      }
+
+      await fetchProfile(profile.id);
+      setEditBusinessName(false);
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    } finally {
+      setSavingBusinessName(false);
+    }
+  };
+
   const perms = ROLE_PERMISSIONS[profile?.roles?.name] || {};
   const allowedPerms = Object.entries(perms).filter(([, allowed]) => allowed).map(([permission]) => permission);
   const deniedPerms = Object.entries(perms).filter(([, allowed]) => !allowed).map(([permission]) => permission);
+  const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'Your Business';
+  const canEditBusinessName = isAdmin();
 
   const Section = ({ title, children }) => (
     <View style={{ marginBottom: 16 }}>
@@ -168,6 +209,58 @@ export default function ProfileScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={{ flex: 2, backgroundColor: colors.secondary, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }} onPress={changePassword} disabled={saving}>
                 {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Update Password</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </Section>
+
+      <Section title="Business">
+        {!editBusinessName ? (
+          <>
+            <Row
+              icon="business-outline"
+              label="Business Name"
+              value={teamBusinessName}
+              onPress={canEditBusinessName ? () => setEditBusinessName(true) : undefined}
+            />
+            {canEditBusinessName && (
+              <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+                <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
+                  Your staff and invite emails will use this name. Platform control keeps your original business name unchanged.
+                </Text>
+              </View>
+            )}
+          </>
+        ) : (
+          <View style={{ padding: 16 }}>
+            <TextInput
+              style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 10 }}
+              placeholder="Business name your team will see"
+              value={businessName}
+              onChangeText={setBusinessName}
+              placeholderTextColor={colors.textLight}
+              autoFocus
+            />
+            <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
+              This updates the staff-facing business name only. The original business name in platform control stays the same.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <TouchableOpacity
+                style={{ flex: 1, borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                onPress={() => {
+                  setEditBusinessName(false);
+                  setBusinessName(teamBusinessName);
+                }}
+              >
+                <Text style={{ color: colors.textLight, fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 2, backgroundColor: colors.secondary, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                onPress={saveBusinessName}
+                disabled={savingBusinessName}
+              >
+                {savingBusinessName ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Save Business Name</Text>}
               </TouchableOpacity>
             </View>
           </View>

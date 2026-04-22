@@ -62,7 +62,7 @@ export default function StaffScreen() {
           .select('*, roles(name)')
           .eq('business_id', profile.business_id)
           .order('created_at', { ascending: false }),
-        supabase.from('businesses').select('name').eq('id', profile.business_id).single(),
+        supabase.from('businesses').select('name, display_name').eq('id', profile.business_id).single(),
       ]);
 
       if (staffRes.error) throw staffRes.error;
@@ -73,7 +73,7 @@ export default function StaffScreen() {
       setStaff(staffRes.data || []);
       setRoles(rolesRes.data || []);
       setInvites(invitesRes.data || []);
-      setBusinessName(businessRes.data?.name || 'Your Business');
+      setBusinessName(businessRes.data?.display_name || businessRes.data?.name || 'Your Business');
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {

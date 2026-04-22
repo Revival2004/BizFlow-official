@@ -10,6 +10,7 @@ What that means:
 - You can still run your own business inside BizFlow
 - You also control who is allowed to create a new client business
 - New client admins need a 30-day token from you
+- Business admins can change the staff-facing business name without changing the original platform business name
 - Staff inside each client business are still invited only by that business admin
 - One business cannot see another business's staff or data
 

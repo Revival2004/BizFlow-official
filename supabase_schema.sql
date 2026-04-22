@@ -14,6 +14,7 @@ create extension if not exists "uuid-ossp";
 create table if not exists public.businesses (
   id          uuid primary key default uuid_generate_v4(),
   name        text not null,
+  display_name text,
   email       text,
   phone       text,
   address     text,
@@ -194,37 +195,43 @@ create table if not exists public.notifications (
 );
 
 -- ============================================================
--- 3. INDEXES
+-- 3. ALIGN EXISTING PROJECTS
 -- ============================================================
-create index if not exists idx_products_business    on public.products(business_id);
-create index if not exists idx_sales_business       on public.sales(business_id);
-create index if not exists idx_sales_created        on public.sales(created_at desc);
-create index if not exists idx_sales_status         on public.sales(business_id, status);
-create index if not exists idx_sale_items_sale      on public.sale_items(sale_id);
-create index if not exists idx_stock_mov_product    on public.stock_movements(product_id);
-create index if not exists idx_profiles_business    on public.profiles(business_id);
-create index if not exists idx_invitations_token    on public.invitations(token);
-create index if not exists idx_invitations_email    on public.invitations(email);
-create index if not exists idx_businesses_status    on public.businesses(status);
-create index if not exists idx_access_tokens_status on public.client_access_tokens(status);
-create index if not exists idx_access_tokens_token  on public.client_access_tokens(token);
-
--- Align existing projects with the app defaults.
 alter table public.businesses alter column currency set default 'KES';
 alter table public.businesses add column if not exists status text default 'active';
+alter table public.businesses add column if not exists display_name text;
 alter table public.businesses add column if not exists owner_name text;
 alter table public.businesses add column if not exists owner_email text;
 alter table public.businesses add column if not exists owner_user_id uuid;
 alter table public.businesses add column if not exists created_by uuid;
 alter table public.profiles add column if not exists is_super_admin boolean default false;
+alter table public.invitations add column if not exists status text default 'pending';
+alter table public.sales add column if not exists status text default 'completed';
+alter table public.client_access_tokens add column if not exists status text default 'active';
 
 update public.businesses
 set status = 'active'
 where status is null;
 
+update public.businesses
+set display_name = trim(coalesce(name, ''))
+where display_name is null or trim(display_name) = '';
+
 update public.profiles
 set is_super_admin = false
 where is_super_admin is null;
+
+update public.invitations
+set status = 'pending'
+where status is null;
+
+update public.sales
+set status = 'completed'
+where status is null;
+
+update public.client_access_tokens
+set status = 'active'
+where status is null;
 
 do $$
 begin
@@ -262,7 +269,23 @@ begin
 end $$;
 
 -- ============================================================
--- 4. HELPER FUNCTIONS
+-- 4. INDEXES
+-- ============================================================
+create index if not exists idx_products_business    on public.products(business_id);
+create index if not exists idx_sales_business       on public.sales(business_id);
+create index if not exists idx_sales_created        on public.sales(created_at desc);
+create index if not exists idx_sales_status         on public.sales(business_id, status);
+create index if not exists idx_sale_items_sale      on public.sale_items(sale_id);
+create index if not exists idx_stock_mov_product    on public.stock_movements(product_id);
+create index if not exists idx_profiles_business    on public.profiles(business_id);
+create index if not exists idx_invitations_token    on public.invitations(token);
+create index if not exists idx_invitations_email    on public.invitations(email);
+create index if not exists idx_businesses_status    on public.businesses(status);
+create index if not exists idx_access_tokens_status on public.client_access_tokens(status);
+create index if not exists idx_access_tokens_token  on public.client_access_tokens(token);
+
+-- ============================================================
+-- 5. HELPER FUNCTIONS
 -- ============================================================
 
 create or replace function public.my_business_id()
@@ -551,6 +574,7 @@ begin
 
   insert into public.businesses(
     name,
+    display_name,
     email,
     status,
     owner_name,
@@ -558,6 +582,7 @@ begin
     owner_user_id,
     created_by
   ) values (
+    v_business_name,
     v_business_name,
     v_email,
     'active',
@@ -664,7 +689,7 @@ end;
 $$;
 
 -- ============================================================
--- 5. ROW LEVEL SECURITY
+-- 6. ROW LEVEL SECURITY
 -- ============================================================
 alter table public.businesses       enable row level security;
 alter table public.roles            enable row level security;
@@ -1296,8 +1321,8 @@ begin
   end if;
 
   -- Create business
-  insert into public.businesses(name, email, status, owner_name, owner_email, owner_user_id, created_by)
-  values (p_biz_name, p_email, 'active', p_full_name, p_email, p_user_id, p_user_id)
+  insert into public.businesses(name, display_name, email, status, owner_name, owner_email, owner_user_id, created_by)
+  values (p_biz_name, p_biz_name, p_email, 'active', p_full_name, p_email, p_user_id, p_user_id)
   returning id into v_biz_id;
 
   v_role_id := public.create_default_roles(v_biz_id);
