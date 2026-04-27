@@ -37,6 +37,7 @@
   },
   "private": true,
   "devDependencies": {
+    "supabase": "^2.95.4",
     "typescript": "~5.9.2"
   }
 }

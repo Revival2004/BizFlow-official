@@ -45,3 +45,6 @@ eas-local-test.tar
 # generated native folders
 /ios
 /android
+
+# Supabase CLI local state
+supabase/.temp/

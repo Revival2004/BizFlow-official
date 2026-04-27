@@ -4,6 +4,57 @@ import { cleanText } from './textEncoding';
 
 const QUEUE_KEY = 'offline_queue';
 const OFFLINE_SALES_KEY = 'offline_sales';
+const CACHE_PREFIX = 'offline_cache';
+const PROFILE_CACHE_PREFIX = `${CACHE_PREFIX}:profile`;
+const DASHBOARD_CACHE_PREFIX = `${CACHE_PREFIX}:dashboard`;
+const STOCK_CACHE_PREFIX = `${CACHE_PREFIX}:stock`;
+const REPORT_CACHE_PREFIX = `${CACHE_PREFIX}:report`;
+
+const cacheKey = (prefix, suffix) => `${prefix}:${suffix}`;
+
+const saveCachedValue = async (key, value) => {
+  try {
+    await AsyncStorage.setItem(key, JSON.stringify({
+      cachedAt: Date.now(),
+      value,
+    }));
+    return true;
+  } catch (error) {
+    console.error('Cache save error:', error);
+    return false;
+  }
+};
+
+const readCachedValue = async (key, { maxAgeMs } = {}) => {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    if (maxAgeMs && parsed.cachedAt && Date.now() - parsed.cachedAt > maxAgeMs) {
+      return null;
+    }
+
+    return parsed.value ?? null;
+  } catch (error) {
+    console.error('Cache read error:', error);
+    return null;
+  }
+};
+
+const removeCachedValue = async (key) => {
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch (error) {
+    console.error('Cache remove error:', error);
+  }
+};
 
 // Save a pending action to queue
 export const queueAction = async (action) => {
@@ -107,20 +158,34 @@ export const syncOfflineData = async (businessId, userId) => {
         });
 
         if (error || !result?.success) {
+          entry.lastError = cleanText(error?.message || result?.error || 'Sync failed');
           failed++;
           continue;
         }
 
         entry.synced = true;
+        entry.syncedAt = Date.now();
+        entry.lastError = null;
         synced++;
       } catch {
+        entry.lastError = 'Sync failed';
         failed++;
       }
     }
 
-    // Save updated sales list (keep 3 days)
+    // Keep only unsynced items plus fresh synced history for support/debugging.
     const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
-    const pruned = sales.filter(s => s.savedAt > threeDaysAgo);
+    const pruned = sales.filter((entry) => {
+      if (!entry.savedAt || entry.savedAt <= threeDaysAgo) {
+        return false;
+      }
+
+      if (!entry.synced) {
+        return true;
+      }
+
+      return Date.now() - (entry.syncedAt || entry.savedAt) < 12 * 60 * 60 * 1000;
+    });
     await AsyncStorage.setItem(OFFLINE_SALES_KEY, JSON.stringify(pruned));
 
     return { synced, failed };
@@ -132,20 +197,82 @@ export const syncOfflineData = async (businessId, userId) => {
 
 // Cache products for offline use
 export const cacheProducts = async (products) => {
-  await AsyncStorage.setItem('cached_products', JSON.stringify({ data: products, cachedAt: Date.now() }));
+  await saveCachedValue('cached_products', products);
 };
 
 // Get cached products
 export const getCachedProducts = async () => {
-  try {
-    const data = await AsyncStorage.getItem('cached_products');
-    if (!data) return null;
-    const parsed = JSON.parse(data);
-    // Valid for 3 days
-    const threeDays = 3 * 24 * 60 * 60 * 1000;
-    if (Date.now() - parsed.cachedAt > threeDays) return null;
-    return parsed.data;
-  } catch {
+  return readCachedValue('cached_products', { maxAgeMs: 3 * 24 * 60 * 60 * 1000 });
+};
+
+export const cacheProfile = async (userId, profile) => {
+  if (!userId || !profile) {
+    return false;
+  }
+
+  return saveCachedValue(cacheKey(PROFILE_CACHE_PREFIX, userId), profile);
+};
+
+export const getCachedProfile = async (userId) => {
+  if (!userId) {
     return null;
   }
+
+  return readCachedValue(cacheKey(PROFILE_CACHE_PREFIX, userId), { maxAgeMs: 14 * 24 * 60 * 60 * 1000 });
+};
+
+export const clearCachedProfile = async (userId) => {
+  if (!userId) {
+    return;
+  }
+
+  await removeCachedValue(cacheKey(PROFILE_CACHE_PREFIX, userId));
+};
+
+export const cacheDashboardSnapshot = async (businessId, snapshot) => {
+  if (!businessId || !snapshot) {
+    return false;
+  }
+
+  return saveCachedValue(cacheKey(DASHBOARD_CACHE_PREFIX, businessId), snapshot);
+};
+
+export const getCachedDashboardSnapshot = async (businessId) => {
+  if (!businessId) {
+    return null;
+  }
+
+  return readCachedValue(cacheKey(DASHBOARD_CACHE_PREFIX, businessId), { maxAgeMs: 14 * 24 * 60 * 60 * 1000 });
+};
+
+export const cacheStockSnapshot = async (businessId, snapshot) => {
+  if (!businessId || !snapshot) {
+    return false;
+  }
+
+  return saveCachedValue(cacheKey(STOCK_CACHE_PREFIX, businessId), snapshot);
+};
+
+export const getCachedStockSnapshot = async (businessId) => {
+  if (!businessId) {
+    return null;
+  }
+
+  return readCachedValue(cacheKey(STOCK_CACHE_PREFIX, businessId), { maxAgeMs: 14 * 24 * 60 * 60 * 1000 });
+};
+
+export const cacheReportSnapshot = async (businessId, period, snapshot) => {
+  if (!businessId || !period || !snapshot) {
+    return false;
+  }
+
+  return saveCachedValue(cacheKey(REPORT_CACHE_PREFIX, `${businessId}:${period}`), snapshot);
+};
+
+export const getCachedReportSnapshot = async (businessId, period) => {
+  if (!businessId || !period) {
+    return null;
+  }
+
+  return readCachedValue(cacheKey(REPORT_CACHE_PREFIX, `${businessId}:${period}`), { maxAgeMs: 14 * 24 * 60 * 60 * 1000 });
 };

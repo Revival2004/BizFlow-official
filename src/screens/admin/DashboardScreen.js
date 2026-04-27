@@ -5,13 +5,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
-import { syncOfflineData } from '../../utils/offline';
+import { cacheDashboardSnapshot, getCachedDashboardSnapshot, syncOfflineData } from '../../utils/offline';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 
 export default function DashboardScreen({ navigation }) {
@@ -28,6 +29,7 @@ export default function DashboardScreen({ navigation }) {
   const [endDayModal, setEndDayModal] = useState(false);
   const [syncBanner, setSyncBanner] = useState(false);
   const [dayEnded, setDayEnded] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   const openSecondaryScreen = (routeName) => {
     const parentNavigation = navigation.getParent?.();
     if (parentNavigation?.navigate) {
@@ -40,13 +42,23 @@ export default function DashboardScreen({ navigation }) {
 
   useEffect(() => {
     if (!profile?.business_id || !profile?.id) {
-      return;
+      return undefined;
     }
 
     loadTarget();
     checkDayEnded();
     fetchStats();
     attemptSync();
+
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      setIsOffline(!state.isConnected);
+    });
+
+    NetInfo.fetch().then((state) => {
+      setIsOffline(!state.isConnected);
+    });
+
+    return () => unsubscribe();
   }, [profile?.business_id, profile?.id]);
 
   const loadTarget = async () => {
@@ -125,8 +137,22 @@ export default function DashboardScreen({ navigation }) {
         monthRevenue: (monthRes.data || []).reduce((sum, sale) => sum + (sale.total_amount || 0), 0),
       });
       setRecentSales(recentSalesWithNames);
+      await cacheDashboardSnapshot(profile.business_id, {
+        stats: {
+          todayRevenue: completed.reduce((sum, sale) => sum + (sale.total_amount || 0), 0),
+          todayProfit: completed.reduce((sum, sale) => sum + (sale.profit || 0), 0),
+          todayOrders: completed.length,
+          monthRevenue: (monthRes.data || []).reduce((sum, sale) => sum + (sale.total_amount || 0), 0),
+        },
+        recentSales: recentSalesWithNames,
+      });
     } catch (error) {
       console.error(error);
+      const cached = await getCachedDashboardSnapshot(profile?.business_id);
+      if (cached) {
+        setStats(cached.stats || null);
+        setRecentSales(cached.recentSales || []);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -134,7 +160,7 @@ export default function DashboardScreen({ navigation }) {
   };
 
   useRealtimeRefresh({
-    enabled: Boolean(profile?.business_id),
+    enabled: Boolean(profile?.business_id) && !isOffline,
     channelName: `dashboard:${profile?.business_id}`,
     bindings: [
       {
@@ -196,6 +222,12 @@ export default function DashboardScreen({ navigation }) {
         <View style={{ backgroundColor: colors.success, padding: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
           <Ionicons name="cloud-upload" size={16} color="#fff" />
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Offline sales synced to cloud.</Text>
+        </View>
+      )}
+      {isOffline && (
+        <View style={{ backgroundColor: '#F59F00', padding: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
+          <Ionicons name="cloud-offline" size={16} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Offline mode: showing your last synced dashboard.</Text>
         </View>
       )}
 

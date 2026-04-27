@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import NetInfo from '@react-native-community/netinfo';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '../../utils/supabase';
@@ -14,6 +15,7 @@ import { fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 import { cleanText } from '../../utils/textEncoding';
+import { cacheReportSnapshot, getCachedReportSnapshot, getCachedStockSnapshot } from '../../utils/offline';
 
 const UTF8_BOM = '\uFEFF';
 
@@ -71,6 +73,7 @@ export default function ReportsScreen() {
   const [searchingItem, setSearchingItem] = useState(false);
   const [allProducts, setAllProducts] = useState([]);
   const [itemSuggestions, setItemSuggestions] = useState([]);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     fetchReport();
@@ -79,6 +82,18 @@ export default function ReportsScreen() {
   useEffect(() => {
     fetchAllProducts();
   }, [profile?.business_id]);
+
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      setIsOffline(!state.isConnected);
+    });
+
+    NetInfo.fetch().then((state) => {
+      setIsOffline(!state.isConnected);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const fetchAllProducts = async () => {
     if (!profile?.business_id) {
@@ -105,6 +120,10 @@ export default function ReportsScreen() {
       }
     } catch (error) {
       console.error(error);
+      const cachedStock = await getCachedStockSnapshot(profile?.business_id);
+      if (productRequestRef.current === requestId && cachedStock?.products) {
+        setAllProducts((cachedStock.products || []).map((product) => ({ id: product.id, name: product.name })));
+      }
     }
   };
 
@@ -216,11 +235,32 @@ export default function ReportsScreen() {
         totalSales: sales.length,
         totalItems: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
       });
-      setTopProducts(Object.values(productMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10));
+      const nextTopProducts = Object.values(productMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+      setTopProducts(nextTopProducts);
       setSalesByDay(days);
+      await cacheReportSnapshot(profile.business_id, period, {
+        data: {
+          totalRevenue,
+          totalCost,
+          totalProfit,
+          avgOrder: sales.length > 0 ? totalRevenue / sales.length : 0,
+          margin: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
+          totalSales: sales.length,
+          totalItems: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+        },
+        topProducts: nextTopProducts,
+        salesByDay: days,
+      });
     } catch (error) {
       if (reportRequestRef.current === requestId) {
-        Alert.alert('Error', error.message);
+        const cached = await getCachedReportSnapshot(profile?.business_id, period);
+        if (cached) {
+          setData(cached.data || null);
+          setTopProducts(cached.topProducts || []);
+          setSalesByDay(cached.salesByDay || []);
+        } else {
+          Alert.alert('Error', error.message);
+        }
       }
     } finally {
       if (reportRequestRef.current === requestId) {
@@ -230,7 +270,7 @@ export default function ReportsScreen() {
   };
 
   useRealtimeRefresh({
-    enabled: Boolean(profile?.business_id),
+    enabled: Boolean(profile?.business_id) && !isOffline,
     channelName: `reports:${profile?.business_id}:${period}`,
     bindings: [
       {
@@ -336,6 +376,11 @@ export default function ReportsScreen() {
       return;
     }
 
+    if (isOffline) {
+      Alert.alert('Offline Mode', 'Item-level report lookup needs a connection. The summary cards below still use your last synced data.');
+      return;
+    }
+
     setSearchingItem(true);
     const requestId = Date.now();
     itemRequestRef.current = requestId;
@@ -385,6 +430,12 @@ export default function ReportsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      {isOffline && (
+        <View style={{ backgroundColor: '#F59F00', padding: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
+          <Ionicons name="cloud-offline" size={16} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Offline mode: showing your last synced reports.</Text>
+        </View>
+      )}
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 + insets.bottom }}>
         <View style={{ flexDirection: 'row', backgroundColor: colors.card, borderRadius: 12, padding: 4, marginBottom: 16 }}>
           {['today', 'week', 'month', 'year'].map((value) => (

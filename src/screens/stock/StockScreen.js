@@ -5,12 +5,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import NetInfo from '@react-native-community/netinfo';
 import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 import { cleanObject, cleanText } from '../../utils/textEncoding';
+import { cacheProducts, cacheStockSnapshot, getCachedStockSnapshot } from '../../utils/offline';
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -76,9 +78,19 @@ export default function StockScreen() {
   const [categoryName, setCategoryName] = useState('');
   const [editingCategory, setEditingCategory] = useState(null);
   const [categorySaving, setCategorySaving] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     fetchAll();
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      setIsOffline(!state.isConnected);
+    });
+
+    NetInfo.fetch().then((state) => {
+      setIsOffline(!state.isConnected);
+    });
+
+    return () => unsubscribe();
   }, [profile?.business_id]);
 
   const showToast = (message) => {
@@ -123,11 +135,25 @@ export default function StockScreen() {
         return;
       }
 
-      setProducts(cleanObject(productsRes.data || []));
-      setCategories(cleanObject(categoriesRes.data || []));
+      const cleanedProducts = cleanObject(productsRes.data || []);
+      const cleanedCategories = cleanObject(categoriesRes.data || []);
+
+      setProducts(cleanedProducts);
+      setCategories(cleanedCategories);
+      await cacheProducts(cleanedProducts);
+      await cacheStockSnapshot(profile.business_id, {
+        products: cleanedProducts,
+        categories: cleanedCategories,
+      });
     } catch (error) {
       if (fetchRequestRef.current === requestId) {
-        Alert.alert('Error', error.message);
+        const cached = await getCachedStockSnapshot(profile?.business_id);
+        if (cached) {
+          setProducts(cleanObject(cached.products || []));
+          setCategories(cleanObject(cached.categories || []));
+        } else {
+          Alert.alert('Error', error.message);
+        }
       }
     } finally {
       if (fetchRequestRef.current === requestId) {
@@ -143,7 +169,7 @@ export default function StockScreen() {
   };
 
   useRealtimeRefresh({
-    enabled: Boolean(profile?.business_id),
+    enabled: Boolean(profile?.business_id) && !isOffline,
     channelName: `stock:${profile?.business_id}`,
     bindings: [
       {
@@ -186,6 +212,11 @@ export default function StockScreen() {
 
   const saveProduct = async () => {
     if (saving || productActionRef.current) {
+      return;
+    }
+
+    if (isOffline) {
+      Alert.alert('Internet Required', 'Product edits need a connection so BizFlow can keep inventory safe across devices.');
       return;
     }
 
@@ -281,6 +312,11 @@ export default function StockScreen() {
       return;
     }
 
+    if (isOffline) {
+      Alert.alert('Internet Required', 'Stock adjustments need a connection so BizFlow can avoid inventory conflicts.');
+      return;
+    }
+
     const qty = parseInt(adjQty, 10);
     if (!qty || qty <= 0) {
       Alert.alert('Error', 'Enter a valid quantity.');
@@ -344,6 +380,11 @@ export default function StockScreen() {
       return;
     }
 
+    if (isOffline) {
+      Alert.alert('Internet Required', 'Category changes need a connection before BizFlow can save them.');
+      return;
+    }
+
     if (!categoryName.trim()) {
       Alert.alert('Error', 'Enter a category name.');
       return;
@@ -392,6 +433,11 @@ export default function StockScreen() {
         style: 'destructive',
         onPress: async () => {
           if (categoryActionRef.current) {
+            return;
+          }
+
+          if (isOffline) {
+            Alert.alert('Internet Required', 'Reconnect before deleting categories.');
             return;
           }
 
@@ -451,6 +497,12 @@ export default function StockScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      {isOffline && (
+        <View style={{ backgroundColor: '#F59F00', padding: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
+          <Ionicons name="cloud-offline" size={16} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Offline mode: showing your last synced stock. Editing is paused until you reconnect.</Text>
+        </View>
+      )}
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}

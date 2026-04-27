@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { isSupabaseConfigured, supabase } from '../utils/supabase';
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh';
+import { cacheProfile, clearCachedProfile, getCachedProfile } from '../utils/offline';
 
 const AuthContext = createContext({});
 const SUPER_ADMIN_EMAIL = 'revivalthuranira@gmail.com';
@@ -86,10 +87,26 @@ export const AuthProvider = ({ children }) => {
       if (persist) {
         setProfile(data);
       }
+      await cacheProfile(userId, data);
 
       return { data, error: null };
     } catch (e) {
       console.error(e);
+      const cachedProfile = await getCachedProfile(userId);
+      if (cachedProfile) {
+        if (persist) {
+          setProfile(cachedProfile);
+        }
+
+        return {
+          data: cachedProfile,
+          error: {
+            message: 'Using your last synced account data while offline.',
+            isOfflineCache: true,
+          },
+        };
+      }
+
       if (persist) {
         setProfile(null);
       }
@@ -171,7 +188,9 @@ export const AuthProvider = ({ children }) => {
   };
 
   const signOut = async () => {
+    const signedInUserId = user?.id || session?.user?.id;
     await supabase.auth.signOut();
+    await clearCachedProfile(signedInUserId);
     setProfile(null);
   };
 
