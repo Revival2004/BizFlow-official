@@ -1,6 +1,8 @@
 import 'react-native-url-polyfill/auto';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import Constants from 'expo-constants';
+import { AppState, Platform } from 'react-native';
 
 const extra = Constants.expoConfig?.extra || {};
 
@@ -28,11 +30,25 @@ if (!isSupabaseConfigured) {
 
 const clientUrl = isSupabaseConfigured ? SUPABASE_URL : 'https://placeholder.invalid';
 const clientKey = isSupabaseConfigured ? SUPABASE_ANON_KEY : 'placeholder-anon-key';
+const isWeb = Platform.OS === 'web';
 
 export const supabase = createClient(clientUrl, clientKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: true,
+    detectSessionInUrl: isWeb,
+    storage: isWeb ? undefined : AsyncStorage,
   },
 });
+
+if (!isWeb) {
+  supabase.auth.startAutoRefresh();
+
+  AppState.addEventListener('change', (nextState) => {
+    if (nextState === 'active') {
+      supabase.auth.startAutoRefresh();
+    } else {
+      supabase.auth.stopAutoRefresh();
+    }
+  });
+}
