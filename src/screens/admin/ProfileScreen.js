@@ -6,9 +6,11 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../utils/supabase';
 import { ROLE_PERMISSIONS } from '../../utils/constants';
+import { cleanText } from '../../utils/textEncoding';
+import { mpesaEnvironmentLabel, mpesaTillTypeLabel } from '../../utils/mpesa';
 
 export default function ProfileScreen() {
-  const { profile, signOut, fetchProfile, isSuperAdmin, isAdmin } = useAuth();
+  const { profile, signOut, fetchProfile, hasPermission, isSuperAdmin, isAdmin } = useAuth();
   const { colors, isDark, toggleTheme } = useTheme();
   const insets = useSafeAreaInsets();
   const [editName, setEditName] = useState(false);
@@ -20,6 +22,19 @@ export default function ProfileScreen() {
   const [changingPass, setChangingPass] = useState(false);
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
+  const [paymentSettingsLoading, setPaymentSettingsLoading] = useState(false);
+  const [paymentSaving, setPaymentSaving] = useState(false);
+  const [paymentSummary, setPaymentSummary] = useState(null);
+  const [paymentForm, setPaymentForm] = useState({
+    is_enabled: false,
+    environment: 'sandbox',
+    till_type: 'paybill',
+    shortcode: '',
+    account_reference: '',
+    consumer_key: '',
+    consumer_secret: '',
+    passkey: '',
+  });
 
   useEffect(() => {
     setName(profile?.full_name || '');
@@ -28,6 +43,41 @@ export default function ProfileScreen() {
   useEffect(() => {
     setBusinessName(profile?.businesses?.display_name || profile?.businesses?.name || '');
   }, [profile?.businesses?.display_name, profile?.businesses?.name]);
+
+  useEffect(() => {
+    if (!profile?.business_id || !hasPermission('manage_payments')) {
+      setPaymentSummary(null);
+      return;
+    }
+
+    const fetchPaymentSummary = async () => {
+      setPaymentSettingsLoading(true);
+
+      try {
+        const { data, error } = await supabase.rpc('get_business_payment_settings_summary');
+
+        if (error) {
+          throw error;
+        }
+
+        setPaymentSummary(data || null);
+        setPaymentForm((current) => ({
+          ...current,
+          is_enabled: data?.is_enabled || false,
+          environment: data?.environment || 'sandbox',
+          till_type: data?.till_type || 'paybill',
+          shortcode: data?.shortcode || '',
+          account_reference: data?.account_reference || '',
+        }));
+      } catch (error) {
+        Alert.alert('Payment Settings Error', error.message);
+      } finally {
+        setPaymentSettingsLoading(false);
+      }
+    };
+
+    fetchPaymentSummary();
+  }, [hasPermission, profile?.business_id]);
 
   const saveProfile = async () => {
     if (!name.trim()) {
@@ -117,11 +167,55 @@ export default function ProfileScreen() {
     }
   };
 
+  const savePaymentSettings = async () => {
+    if (!hasPermission('manage_payments')) {
+      return;
+    }
+
+    if (!paymentForm.shortcode.trim()) {
+      Alert.alert('M-Pesa Required', 'Enter the business shortcode or till number.');
+      return;
+    }
+
+    setPaymentSaving(true);
+
+    try {
+      const { data, error } = await supabase.rpc('upsert_business_payment_settings', {
+        p_is_enabled: paymentForm.is_enabled,
+        p_environment: paymentForm.environment,
+        p_till_type: paymentForm.till_type,
+        p_shortcode: cleanText(paymentForm.shortcode).trim(),
+        p_consumer_key: cleanText(paymentForm.consumer_key).trim() || null,
+        p_consumer_secret: cleanText(paymentForm.consumer_secret).trim() || null,
+        p_passkey: cleanText(paymentForm.passkey).trim() || null,
+        p_account_reference: cleanText(paymentForm.account_reference).trim() || null,
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setPaymentSummary(data || null);
+      setPaymentForm((current) => ({
+        ...current,
+        consumer_key: '',
+        consumer_secret: '',
+        passkey: '',
+      }));
+      Alert.alert('Saved', 'This business can now use its own M-Pesa settings.');
+    } catch (error) {
+      Alert.alert('M-Pesa Error', error.message);
+    } finally {
+      setPaymentSaving(false);
+    }
+  };
+
   const perms = ROLE_PERMISSIONS[profile?.roles?.name] || {};
   const allowedPerms = Object.entries(perms).filter(([, allowed]) => allowed).map(([permission]) => permission);
   const deniedPerms = Object.entries(perms).filter(([, allowed]) => !allowed).map(([permission]) => permission);
   const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'Your Business';
   const canEditBusinessName = isAdmin();
+  const canManagePayments = hasPermission('manage_payments');
 
   const Section = ({ title, children }) => (
     <View style={{ marginBottom: 16 }}>
@@ -266,6 +360,126 @@ export default function ProfileScreen() {
           </View>
         )}
       </Section>
+
+      {canManagePayments && (
+        <Section title="Payments">
+          <View style={{ padding: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>M-Pesa Integration</Text>
+                <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
+                  This business controls its own Daraja credentials. No super-admin step is needed once you save them here.
+                </Text>
+              </View>
+              <Switch
+                value={paymentForm.is_enabled}
+                onValueChange={(value) => setPaymentForm((current) => ({ ...current, is_enabled: value }))}
+                trackColor={{ false: colors.border, true: colors.secondary }}
+                thumbColor="#fff"
+              />
+            </View>
+
+            {paymentSettingsLoading ? (
+              <ActivityIndicator color={colors.secondary} style={{ marginVertical: 24 }} />
+            ) : (
+              <>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 8 }}>Environment</Text>
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                  {['sandbox', 'live'].map((value) => (
+                    <TouchableOpacity
+                      key={value}
+                      style={{
+                        flex: 1,
+                        height: 42,
+                        borderRadius: 12,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderWidth: 1.5,
+                        borderColor: paymentForm.environment === value ? colors.secondary : colors.border,
+                        backgroundColor: paymentForm.environment === value ? colors.secondary : 'transparent',
+                      }}
+                      onPress={() => setPaymentForm((current) => ({ ...current, environment: value }))}
+                    >
+                      <Text style={{ color: paymentForm.environment === value ? '#fff' : colors.text, fontWeight: '700' }}>
+                        {mpesaEnvironmentLabel(value)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 8 }}>Collection Type</Text>
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                  {['paybill', 'till'].map((value) => (
+                    <TouchableOpacity
+                      key={value}
+                      style={{
+                        flex: 1,
+                        height: 42,
+                        borderRadius: 12,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderWidth: 1.5,
+                        borderColor: paymentForm.till_type === value ? colors.secondary : colors.border,
+                        backgroundColor: paymentForm.till_type === value ? colors.secondary : 'transparent',
+                      }}
+                      onPress={() => setPaymentForm((current) => ({ ...current, till_type: value }))}
+                    >
+                      <Text style={{ color: paymentForm.till_type === value ? '#fff' : colors.text, fontWeight: '700' }}>
+                        {mpesaTillTypeLabel(value)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {[
+                  { label: 'Shortcode or Till Number', key: 'shortcode', placeholder: 'e.g. 174379' },
+                  { label: 'Account Reference', key: 'account_reference', placeholder: profile?.businesses?.display_name || profile?.businesses?.name || 'BFlow' },
+                  { label: 'Consumer Key', key: 'consumer_key', placeholder: paymentSummary?.has_consumer_key ? 'Consumer key already stored. Leave blank to keep.' : 'Paste consumer key' },
+                  { label: 'Consumer Secret', key: 'consumer_secret', placeholder: paymentSummary?.has_consumer_secret ? 'Secret already stored. Leave blank to keep.' : 'Paste consumer secret' },
+                  { label: 'Passkey', key: 'passkey', placeholder: paymentSummary?.has_passkey ? 'Passkey already stored. Leave blank to keep.' : 'Paste M-Pesa passkey' },
+                ].map((field) => (
+                  <View key={field.key} style={{ marginBottom: 10 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 5 }}>{field.label}</Text>
+                    <TextInput
+                      style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg }}
+                      placeholder={field.placeholder}
+                      value={paymentForm[field.key]}
+                      onChangeText={(value) => setPaymentForm((current) => ({ ...current, [field.key]: value }))}
+                      placeholderTextColor={colors.textLight}
+                      autoCapitalize="none"
+                      secureTextEntry={field.key === 'consumer_secret' || field.key === 'passkey'}
+                    />
+                  </View>
+                ))}
+
+                <View style={{ backgroundColor: colors.bg, borderRadius: 14, padding: 12, marginBottom: 12 }}>
+                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700', marginBottom: 4 }}>Current Status</Text>
+                  <Text style={{ color: colors.textLight, fontSize: 12, lineHeight: 18 }}>
+                    {paymentSummary?.configured
+                      ? `Configured for ${mpesaEnvironmentLabel(paymentSummary.environment)} ${mpesaTillTypeLabel(paymentSummary.till_type)}.`
+                      : 'Not configured yet.'}
+                    {' '}
+                    {paymentSummary?.configured && paymentSummary?.is_enabled ? 'M-Pesa is enabled for checkout.' : 'Enable the switch above when you are ready.'}
+                  </Text>
+                  {paymentSummary?.last_test_status ? (
+                    <Text style={{ color: colors.textLight, fontSize: 11, marginTop: 6 }}>
+                      Last connection result: {cleanText(paymentSummary.last_test_status)}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <TouchableOpacity
+                  style={{ backgroundColor: colors.secondary, borderRadius: 12, height: 48, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={savePaymentSettings}
+                  disabled={paymentSaving}
+                >
+                  {paymentSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '800' }}>Save M-Pesa Settings</Text>}
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </Section>
+      )}
 
       <Section title="My Permissions">
         <View style={{ padding: 14 }}>

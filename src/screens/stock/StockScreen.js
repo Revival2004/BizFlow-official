@@ -52,9 +52,14 @@ export default function StockScreen() {
   const { profile, hasPermission } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const fetchRequestRef = useRef(0);
+  const productActionRef = useRef(false);
+  const adjustmentActionRef = useRef(false);
+  const categoryActionRef = useRef(false);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('all');
   const [modalVisible, setModalVisible] = useState(false);
@@ -74,14 +79,27 @@ export default function StockScreen() {
 
   useEffect(() => {
     fetchAll();
-  }, []);
+  }, [profile?.business_id]);
 
   const showToast = (message) => {
     setToast({ message, trigger: Date.now() });
   };
 
-  const fetchAll = async () => {
-    setLoading(true);
+  const fetchAll = async ({ silent = false } = {}) => {
+    if (!profile?.business_id) {
+      setProducts([]);
+      setCategories([]);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    if (!silent) {
+      setLoading(true);
+    }
+
+    const requestId = Date.now();
+    fetchRequestRef.current = requestId;
 
     try {
       const [productsRes, categoriesRes] = await Promise.all([
@@ -101,13 +119,27 @@ export default function StockScreen() {
       if (productsRes.error) throw productsRes.error;
       if (categoriesRes.error) throw categoriesRes.error;
 
+      if (fetchRequestRef.current !== requestId) {
+        return;
+      }
+
       setProducts(cleanObject(productsRes.data || []));
       setCategories(cleanObject(categoriesRes.data || []));
     } catch (error) {
-      Alert.alert('Error', error.message);
+      if (fetchRequestRef.current === requestId) {
+        Alert.alert('Error', error.message);
+      }
     } finally {
-      setLoading(false);
+      if (fetchRequestRef.current === requestId) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
+  };
+
+  const refreshAll = async () => {
+    setRefreshing(true);
+    await fetchAll({ silent: true });
   };
 
   useRealtimeRefresh({
@@ -153,11 +185,16 @@ export default function StockScreen() {
   };
 
   const saveProduct = async () => {
+    if (saving || productActionRef.current) {
+      return;
+    }
+
     if (!form.name.trim() || !form.selling_price || !form.cost_price) {
       Alert.alert('Required', 'Name, cost and selling price are required.');
       return;
     }
 
+    productActionRef.current = true;
     setSaving(true);
 
     const payload = {
@@ -234,11 +271,16 @@ export default function StockScreen() {
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
+      productActionRef.current = false;
       setSaving(false);
     }
   };
 
   const doAdjustment = async () => {
+    if (saving || adjustmentActionRef.current) {
+      return;
+    }
+
     const qty = parseInt(adjQty, 10);
     if (!qty || qty <= 0) {
       Alert.alert('Error', 'Enter a valid quantity.');
@@ -253,6 +295,7 @@ export default function StockScreen() {
       return;
     }
 
+    adjustmentActionRef.current = true;
     setSaving(true);
 
     try {
@@ -291,16 +334,22 @@ export default function StockScreen() {
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
+      adjustmentActionRef.current = false;
       setSaving(false);
     }
   };
 
   const saveCategory = async () => {
+    if (categorySaving || categoryActionRef.current) {
+      return;
+    }
+
     if (!categoryName.trim()) {
       Alert.alert('Error', 'Enter a category name.');
       return;
     }
 
+    categoryActionRef.current = true;
     setCategorySaving(true);
 
     try {
@@ -330,6 +379,7 @@ export default function StockScreen() {
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
+      categoryActionRef.current = false;
       setCategorySaving(false);
     }
   };
@@ -341,6 +391,12 @@ export default function StockScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
+          if (categoryActionRef.current) {
+            return;
+          }
+
+          categoryActionRef.current = true;
+
           try {
             const { count, error: usageError } = await supabase
               .from('products')
@@ -369,6 +425,8 @@ export default function StockScreen() {
             await fetchAll();
           } catch (err) {
             Alert.alert('Error', err.message);
+          } finally {
+            categoryActionRef.current = false;
           }
         },
       },
@@ -376,8 +434,12 @@ export default function StockScreen() {
   };
 
   const totalStockValue = products.reduce((sum, product) => sum + (product.cost_price * product.quantity), 0);
-  const lowStockCount = products.filter((product) => product.quantity > 0 && product.quantity <= product.reorder_level).length;
+  const lowStockProducts = products.filter((product) => product.quantity > 0 && product.quantity <= product.reorder_level);
+  const lowStockCount = lowStockProducts.length;
   const outCount = products.filter((product) => product.quantity === 0).length;
+  const healthyCount = Math.max(products.length - lowStockCount - outCount, 0);
+  const stockHealth = products.length ? Math.round((healthyCount / products.length) * 100) : 100;
+  const categoryOptions = [{ id: 'all', name: 'All Items' }, ...categories.map((category) => ({ id: category.id, name: category.name }))];
 
   if (loading) {
     return (
@@ -388,101 +450,231 @@ export default function StockScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg, paddingBottom: insets.bottom }}>
-      <View style={{ flexDirection: 'row', padding: 12, gap: 10 }}>
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: 10, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: colors.border }}>
-          <Ionicons name="search" size={16} color={colors.textLight} />
-          <TextInput style={{ flex: 1, marginLeft: 8, fontSize: 14, color: colors.text }} placeholder="Search products, SKU..." value={search} onChangeText={setSearch} placeholderTextColor={colors.textLight} />
-        </View>
-        {hasPermission('manage_categories') && (
-          <TouchableOpacity style={{ width: 42, height: 42, backgroundColor: colors.warning, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }} onPress={() => setCategoryModal(true)}>
-            <Ionicons name="grid" size={20} color="#fff" />
-          </TouchableOpacity>
-        )}
-        {hasPermission('add_stock') && (
-          <TouchableOpacity style={{ width: 42, height: 42, backgroundColor: colors.secondary, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }} onPress={() => { setForm(emptyForm); setEditProduct(null); setModalVisible(true); }}>
-            <Ionicons name="add" size={22} color="#fff" />
-          </TouchableOpacity>
-        )}
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingLeft: 12, marginBottom: 8 }}>
-        {['all', ...categories.map((category) => category.id)].map((id) => {
-          const category = id === 'all' ? { name: 'All' } : categories.find((entry) => entry.id === id);
-          return (
-            <TouchableOpacity key={id} style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: catFilter === id ? colors.secondary : colors.card, borderWidth: 1, borderColor: catFilter === id ? colors.secondary : colors.border, marginRight: 8 }} onPress={() => setCatFilter(id)}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: catFilter === id ? '#fff' : colors.textLight }}>{cleanText(category?.name || '')}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      <View style={{ flexDirection: 'row', backgroundColor: colors.card, marginHorizontal: 12, borderRadius: 12, padding: 12, marginBottom: 10 }}>
-        {[
-          { label: 'Products', value: products.length, color: colors.text },
-          { label: 'Low Stock', value: lowStockCount, color: colors.warning },
-          { label: 'Out of Stock', value: outCount, color: colors.danger },
-          { label: 'Stock Value', value: `KSh ${(totalStockValue / 1000).toFixed(1)}K`, color: colors.secondary },
-        ].map((item, index) => (
-          <View key={index} style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ fontSize: 16, fontWeight: '800', color: item.color }}>{item.value}</Text>
-            <Text style={{ fontSize: 9, color: colors.textLight, marginTop: 2, textAlign: 'center' }}>{item.label}</Text>
-          </View>
-        ))}
-      </View>
-
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 12, paddingTop: 0, paddingBottom: 16 }}
-        renderItem={({ item }) => (
-          <View style={{ backgroundColor: colors.card, borderRadius: 14, padding: 14, marginBottom: 8, flexDirection: 'row', borderLeftWidth: 4, borderLeftColor: item.quantity === 0 ? colors.danger : item.quantity <= item.reorder_level ? colors.warning : colors.border }}>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, flex: 1 }}>{cleanText(item.name || '')}</Text>
-                {item.quantity === 0 && <View style={{ backgroundColor: colors.danger + '20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}><Text style={{ color: colors.danger, fontSize: 9, fontWeight: '700' }}>OUT</Text></View>}
-                {item.quantity > 0 && item.quantity <= item.reorder_level && <View style={{ backgroundColor: colors.warning + '20', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}><Text style={{ color: colors.warning, fontSize: 9, fontWeight: '700' }}>LOW</Text></View>}
+        refreshing={refreshing}
+        onRefresh={refreshAll}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ padding: 12, paddingBottom: 20 + insets.bottom }}
+        ListHeaderComponent={(
+          <>
+            <View style={{ backgroundColor: colors.card, borderRadius: 22, padding: 18, marginBottom: 14, borderWidth: 1, borderColor: colors.border }}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={{ fontSize: 21, fontWeight: '800', color: colors.text }}>Stock Center</Text>
+                  <Text style={{ fontSize: 13, color: colors.textLight, marginTop: 4 }}>
+                    Track inventory, low-stock pressure, and category performance at a glance.
+                  </Text>
+                </View>
+                <View style={{ backgroundColor: colors.secondary + '12', borderRadius: 16, width: 54, height: 54, alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="cube" size={26} color={colors.secondary} />
+                </View>
               </View>
-              {item.sku ? <Text style={{ fontSize: 11, color: colors.textLight }}>SKU: {item.sku}</Text> : null}
-              <Text style={{ fontSize: 11, color: colors.secondary, fontWeight: '600' }}>{cleanText(item.categories?.name || 'Uncategorised')}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
-                <Text style={{ fontSize: 14, fontWeight: '800', color: colors.text }}>{fmt(item.selling_price)}</Text>
-                <Text style={{ fontSize: 11, color: colors.textLight }}>Cost: {fmt(item.cost_price)}</Text>
-                {item.selling_price > 0 && <Text style={{ fontSize: 11, color: colors.success, fontWeight: '600' }}>{(((item.selling_price - item.cost_price) / item.selling_price) * 100).toFixed(0)}% margin</Text>}
+
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
+                {[
+                  { label: 'Products', value: products.length, hint: `${healthyCount} healthy`, color: colors.text, icon: 'layers-outline' },
+                  { label: 'Low Stock', value: lowStockCount, hint: lowStockCount > 0 ? 'Needs restock' : 'All good', color: colors.warning, icon: 'warning-outline' },
+                  { label: 'Out of Stock', value: outCount, hint: outCount > 0 ? 'Urgent action' : 'No outages', color: colors.danger, icon: 'remove-circle-outline' },
+                  { label: 'Stock Value', value: fmt(totalStockValue), hint: `${stockHealth}% healthy`, color: colors.secondary, icon: 'cash-outline' },
+                ].map((card) => (
+                  <View key={card.label} style={{ width: '48%', backgroundColor: colors.bg, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <Ionicons name={card.icon} size={16} color={card.color} />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textLight }}>{card.label}</Text>
+                    </View>
+                    <Text style={{ fontSize: 18, fontWeight: '900', color: card.color }}>{card.value}</Text>
+                    <Text style={{ fontSize: 11, color: colors.textLight, marginTop: 4 }}>{card.hint}</Text>
+                  </View>
+                ))}
               </View>
             </View>
-            <View style={{ alignItems: 'center', justifyContent: 'center', minWidth: 64 }}>
-              <Text style={{ fontSize: 28, fontWeight: '900', color: item.quantity === 0 ? colors.danger : colors.text }}>{item.quantity}</Text>
-              <Text style={{ fontSize: 10, color: colors.textLight }}>{item.unit}</Text>
-              <View style={{ flexDirection: 'row', gap: 4, marginTop: 6 }}>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: 14, paddingHorizontal: 14, height: 48, borderWidth: 1, borderColor: colors.border }}>
+                <Ionicons name="search" size={17} color={colors.textLight} />
+                <TextInput
+                  style={{ flex: 1, marginLeft: 10, fontSize: 14, color: colors.text }}
+                  placeholder="Search products or SKU"
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholderTextColor={colors.textLight}
+                />
+              </View>
+              {hasPermission('manage_categories') && (
+                <TouchableOpacity
+                  style={{ width: 48, height: 48, backgroundColor: colors.warning, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={() => setCategoryModal(true)}
+                >
+                  <Ionicons name="grid" size={20} color="#fff" />
+                </TouchableOpacity>
+              )}
+              {hasPermission('add_stock') && (
+                <TouchableOpacity
+                  style={{ width: 48, height: 48, backgroundColor: colors.secondary, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={() => { setForm(emptyForm); setEditProduct(null); setModalVisible(true); }}
+                >
+                  <Ionicons name="add" size={22} color="#fff" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+              {categoryOptions.map((category) => (
+                <TouchableOpacity
+                  key={category.id}
+                  style={{
+                    paddingHorizontal: 14,
+                    paddingVertical: 8,
+                    borderRadius: 999,
+                    backgroundColor: catFilter === category.id ? colors.secondary : colors.card,
+                    borderWidth: 1,
+                    borderColor: catFilter === category.id ? colors.secondary : colors.border,
+                    marginRight: 8,
+                  }}
+                  onPress={() => setCatFilter(category.id)}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: catFilter === category.id ? '#fff' : colors.textLight }}>
+                    {cleanText(category.name || '')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
+                {filtered.length} of {products.length} item{products.length === 1 ? '' : 's'}
+              </Text>
+              <Text style={{ fontSize: 12, color: colors.textLight }}>
+                {lowStockCount > 0 ? `${lowStockCount} low stock` : 'Inventory stable'}
+              </Text>
+            </View>
+          </>
+        )}
+        renderItem={({ item }) => {
+          const isOut = item.quantity === 0;
+          const isLow = item.quantity > 0 && item.quantity <= item.reorder_level;
+          const margin = item.selling_price > 0
+            ? (((item.selling_price - item.cost_price) / item.selling_price) * 100).toFixed(0)
+            : '0';
+
+          return (
+            <View style={{ backgroundColor: colors.card, borderRadius: 18, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: colors.border }}>
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: (isOut ? colors.danger : isLow ? colors.warning : colors.secondary) + '14', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <Ionicons name={isOut ? 'alert-circle' : isLow ? 'warning' : 'cube-outline'} size={22} color={isOut ? colors.danger : isLow ? colors.warning : colors.secondary} />
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                    <Text style={{ flex: 1, fontSize: 16, fontWeight: '800', color: colors.text }}>{cleanText(item.name || '')}</Text>
+                    <View style={{ backgroundColor: (isOut ? colors.danger : isLow ? colors.warning : colors.success) + '16', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: isOut ? colors.danger : isLow ? colors.warning : colors.success }}>
+                        {isOut ? 'OUT' : isLow ? 'LOW' : 'OK'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4 }}>
+                    {item.sku ? `SKU ${cleanText(item.sku || '')} · ` : ''}{cleanText(item.categories?.name || 'Uncategorised')}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', backgroundColor: colors.bg, borderRadius: 16, padding: 12, marginTop: 14 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, color: colors.textLight, marginBottom: 4 }}>Selling Price</Text>
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: colors.secondary }}>{fmt(item.selling_price)}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, color: colors.textLight, marginBottom: 4 }}>Cost</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{fmt(item.cost_price)}</Text>
+                </View>
+                <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                  <Text style={{ fontSize: 11, color: colors.textLight, marginBottom: 4 }}>In Stock</Text>
+                  <Text style={{ fontSize: 22, fontWeight: '900', color: isOut ? colors.danger : colors.text }}>{item.quantity}</Text>
+                  <Text style={{ fontSize: 11, color: colors.textLight }}>{cleanText(item.unit || 'pcs')}</Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingHorizontal: 2 }}>
+                <Text style={{ fontSize: 12, color: colors.textLight }}>Reorder at {item.reorder_level}</Text>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.success }}>{margin}% margin</Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
                 {hasPermission('add_stock') && (
-                  <TouchableOpacity style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }} onPress={() => { setAdjProduct(item); setAdjQty(''); setAdjNote(''); setAdjType('add'); setAdjModal(true); }}>
+                  <TouchableOpacity
+                    style={{ flex: 1, height: 42, borderRadius: 12, backgroundColor: colors.secondary + '12', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6 }}
+                    onPress={() => { setAdjProduct(item); setAdjQty(''); setAdjNote(''); setAdjType('add'); setAdjModal(true); }}
+                  >
                     <Ionicons name="layers" size={16} color={colors.secondary} />
+                    <Text style={{ color: colors.secondary, fontWeight: '700', fontSize: 12 }}>Adjust</Text>
                   </TouchableOpacity>
                 )}
                 {hasPermission('edit_stock') && (
-                  <TouchableOpacity style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }} onPress={() => { setForm({ name: cleanText(item.name || ''), sku: cleanText(item.sku || ''), cost_price: String(item.cost_price), selling_price: String(item.selling_price), quantity: String(item.quantity), reorder_level: String(item.reorder_level || 5), category_id: item.category_id || '', unit: cleanText(item.unit || 'pcs'), description: cleanText(item.description || '') }); setEditProduct(item); setModalVisible(true); }}>
+                  <TouchableOpacity
+                    style={{ flex: 1, height: 42, borderRadius: 12, backgroundColor: colors.warning + '14', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6 }}
+                    onPress={() => {
+                      setForm({
+                        name: cleanText(item.name || ''),
+                        sku: cleanText(item.sku || ''),
+                        cost_price: String(item.cost_price),
+                        selling_price: String(item.selling_price),
+                        quantity: String(item.quantity),
+                        reorder_level: String(item.reorder_level || 5),
+                        category_id: item.category_id || '',
+                        unit: cleanText(item.unit || 'pcs'),
+                        description: cleanText(item.description || ''),
+                      });
+                      setEditProduct(item);
+                      setModalVisible(true);
+                    }}
+                  >
                     <Ionicons name="pencil" size={16} color={colors.warning} />
+                    <Text style={{ color: colors.warning, fontWeight: '700', fontSize: 12 }}>Edit</Text>
                   </TouchableOpacity>
                 )}
                 {hasPermission('delete_stock') && (
-                  <TouchableOpacity style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }} onPress={() => Alert.alert('Delete', `Delete "${cleanText(item.name || '')}"?`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => {
-                    try {
-                      const { error } = await supabase.from('products').update({ is_active: false }).eq('id', item.id);
-                      if (error) throw error;
-                      await fetchAll();
-                    } catch (err) {
-                      Alert.alert('Error', err.message);
-                    }
-                  } }])}>
+                  <TouchableOpacity
+                    style={{ width: 48, height: 42, borderRadius: 12, backgroundColor: colors.danger + '14', alignItems: 'center', justifyContent: 'center' }}
+                    onPress={() => Alert.alert('Delete', `Delete "${cleanText(item.name || '')}"?`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => {
+                      if (productActionRef.current) {
+                        return;
+                      }
+
+                      productActionRef.current = true;
+
+                      try {
+                        const { error } = await supabase.from('products').update({ is_active: false }).eq('id', item.id);
+                        if (error) throw error;
+                        await fetchAll();
+                      } catch (err) {
+                        Alert.alert('Error', err.message);
+                      } finally {
+                        productActionRef.current = false;
+                      }
+                    } }])}
+                  >
                     <Ionicons name="trash" size={16} color={colors.danger} />
                   </TouchableOpacity>
                 )}
               </View>
             </View>
+          );
+        }}
+        ListEmptyComponent={(
+          <View style={{ backgroundColor: colors.card, borderRadius: 18, padding: 36, alignItems: 'center', borderWidth: 1, borderColor: colors.border }}>
+            <Ionicons name="cube-outline" size={50} color={colors.textLight} />
+            <Text style={{ color: colors.text, marginTop: 12, fontSize: 16, fontWeight: '700' }}>No products found</Text>
+            <Text style={{ color: colors.textLight, marginTop: 6, textAlign: 'center' }}>
+              Try another search term or switch your category filter.
+            </Text>
           </View>
         )}
-        ListEmptyComponent={<View style={{ alignItems: 'center', padding: 48 }}><Ionicons name="cube-outline" size={48} color={colors.textLight} /><Text style={{ color: colors.textLight, marginTop: 10 }}>No products found</Text></View>}
       />
 
       <Modal visible={modalVisible} transparent animationType="slide">

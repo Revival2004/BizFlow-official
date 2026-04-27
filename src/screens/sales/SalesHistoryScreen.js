@@ -197,6 +197,12 @@ export default function SalesHistoryScreen() {
     (sum, sale) => sum + (sale.status === 'completed' ? Number(sale.total_amount || 0) : 0),
     0
   );
+  const paymentIcon = (method) => {
+    if (method === 'cash') return 'cash';
+    if (method === 'card') return 'card';
+    if (method === 'mpesa') return 'phone-portrait';
+    return 'swap-horizontal';
+  };
 
   return (
     <View style={styles.container}>
@@ -242,7 +248,7 @@ export default function SalesHistoryScreen() {
               <View style={styles.saleCardRight}>
                 <Text style={styles.saleAmount}>{fmt(item.total_amount)}</Text>
                 <View style={styles.methodBadge}>
-                  <Ionicons name={item.payment_method === 'cash' ? 'cash' : item.payment_method === 'card' ? 'card' : 'swap-horizontal'} size={12} color={COLORS.textLight} />
+                  <Ionicons name={paymentIcon(item.payment_method)} size={12} color={COLORS.textLight} />
                   <Text style={styles.methodText}>{item.payment_method}</Text>
                 </View>
                 <View style={[styles.statusBadge, { backgroundColor: item.status === 'completed' ? COLORS.success + '20' : COLORS.danger + '20' }]}>

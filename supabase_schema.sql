@@ -5,6 +5,7 @@
 
 -- 1. EXTENSIONS
 create extension if not exists "uuid-ossp";
+create extension if not exists "pgcrypto";
 
 -- ============================================================
 -- 2. CORE TABLES
@@ -85,6 +86,26 @@ create table if not exists public.client_access_tokens (
   created_at       timestamptz default now()
 );
 
+-- Business-owned payment settings
+create table if not exists public.business_payment_settings (
+  id               uuid primary key default uuid_generate_v4(),
+  business_id      uuid unique references public.businesses(id) on delete cascade,
+  provider         text not null default 'mpesa' check (provider in ('mpesa')),
+  is_enabled       boolean not null default false,
+  environment      text not null default 'sandbox' check (environment in ('sandbox','live')),
+  till_type        text not null default 'paybill' check (till_type in ('paybill','till')),
+  shortcode        text,
+  consumer_key     text,
+  consumer_secret  text,
+  passkey          text,
+  account_reference text,
+  callback_secret  text not null default encode(gen_random_bytes(18), 'hex'),
+  last_test_status text,
+  last_tested_at   timestamptz,
+  created_at       timestamptz default now(),
+  updated_at       timestamptz default now()
+);
+
 -- Categories
 create table if not exists public.categories (
   id          uuid primary key default uuid_generate_v4(),
@@ -141,7 +162,7 @@ create table if not exists public.sales (
   profit            numeric(12,2) default 0,
   discount_amount   numeric(12,2) default 0,
   tax_amount        numeric(12,2) default 0,
-  payment_method    text default 'cash' check (payment_method in ('cash','card','transfer','mixed')),
+  payment_method    text default 'cash' check (payment_method in ('cash','card','transfer','mixed','mpesa')),
   amount_tendered   numeric(12,2) default 0,
   change_given      numeric(12,2) default 0,
   status            text default 'completed' check (status in ('completed','voided','refunded','pending')),
@@ -151,6 +172,36 @@ create table if not exists public.sales (
   voided_at         timestamptz,
   void_reason       text,
   created_at        timestamptz default now()
+);
+
+-- External payment intents
+create table if not exists public.payment_intents (
+  id                       uuid primary key default uuid_generate_v4(),
+  business_id              uuid references public.businesses(id) on delete cascade,
+  created_by               uuid references public.profiles(id) on delete set null,
+  sale_id                  uuid references public.sales(id) on delete set null,
+  reference_number         text not null,
+  provider                 text not null default 'mpesa' check (provider in ('mpesa')),
+  customer_name            text,
+  customer_phone           text not null,
+  amount                   numeric(12,2) not null,
+  currency                 text default 'KES',
+  status                   text not null default 'pending' check (status in ('pending','initiated','paid','completed','failed','cancelled','expired')),
+  sale_payload             jsonb not null default '{}'::jsonb,
+  items_payload            jsonb not null default '[]'::jsonb,
+  mpesa_checkout_request_id text,
+  mpesa_merchant_request_id text,
+  mpesa_receipt_number     text,
+  mpesa_result_code        integer,
+  mpesa_result_desc        text,
+  raw_initiation_response  jsonb,
+  raw_callback_response    jsonb,
+  last_polled_at           timestamptz,
+  paid_at                  timestamptz,
+  completed_at             timestamptz,
+  error_message            text,
+  created_at               timestamptz default now(),
+  updated_at               timestamptz default now()
 );
 
 -- Sale Line Items
@@ -266,6 +317,17 @@ begin
       add constraint sales_voided_by_fkey
       foreign key (voided_by) references public.profiles(id) on delete set null;
   end if;
+
+  if exists (
+    select 1 from pg_constraint where conname = 'sales_payment_method_check'
+  ) then
+    alter table public.sales
+      drop constraint sales_payment_method_check;
+  end if;
+
+  alter table public.sales
+    add constraint sales_payment_method_check
+    check (payment_method in ('cash','card','transfer','mixed','mpesa'));
 end $$;
 
 -- ============================================================
@@ -275,6 +337,9 @@ create index if not exists idx_products_business    on public.products(business_
 create index if not exists idx_sales_business       on public.sales(business_id);
 create index if not exists idx_sales_created        on public.sales(created_at desc);
 create index if not exists idx_sales_status         on public.sales(business_id, status);
+create index if not exists idx_payment_intents_business_status on public.payment_intents(business_id, status, created_at desc);
+create index if not exists idx_payment_intents_checkout on public.payment_intents(mpesa_checkout_request_id);
+create index if not exists idx_payment_intents_reference on public.payment_intents(reference_number);
 create index if not exists idx_sale_items_sale      on public.sale_items(sale_id);
 create index if not exists idx_stock_mov_product    on public.stock_movements(product_id);
 create index if not exists idx_profiles_business    on public.profiles(business_id);
@@ -283,6 +348,7 @@ create index if not exists idx_invitations_email    on public.invitations(email)
 create index if not exists idx_businesses_status    on public.businesses(status);
 create index if not exists idx_access_tokens_status on public.client_access_tokens(status);
 create index if not exists idx_access_tokens_token  on public.client_access_tokens(token);
+create index if not exists idx_payment_settings_business on public.business_payment_settings(business_id);
 
 -- ============================================================
 -- 5. HELPER FUNCTIONS
@@ -337,28 +403,38 @@ declare
   v_admin_role_id uuid;
 begin
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'admin',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":true,"manage_staff":true,"invite_staff":true,"view_profits":true,"manage_categories":true}'
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":true,"manage_staff":true,"invite_staff":true,"view_profits":true,"manage_categories":true,"manage_payments":true}'
   ) returning id into v_admin_role_id;
 
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'sales_manager',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false}'
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false,"manage_payments":false}'
   );
 
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'cashier',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":false,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":false}'
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":false,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":false,"manage_payments":false}'
   );
 
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'stock_manager',
-    '{"view_dashboard":true,"view_sales":false,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":true}'
+    '{"view_dashboard":true,"view_sales":false,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":true,"manage_payments":false}'
   );
 
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'accountant',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false}'
+    '{"view_dashboard":true,"view_sales":true,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false,"manage_payments":false}'
   );
 
   return v_admin_role_id;
 end;
 $$;
+
+update public.roles
+set permissions = coalesce(permissions, '{}'::jsonb) || jsonb_build_object('manage_payments', true)
+where name = 'admin'
+  and coalesce((permissions->>'manage_payments')::boolean, false) = false;
+
+update public.roles
+set permissions = coalesce(permissions, '{}'::jsonb) || jsonb_build_object('manage_payments', false)
+where name in ('sales_manager', 'cashier', 'stock_manager', 'accountant')
+  and not (coalesce(permissions, '{}'::jsonb) ? 'manage_payments');
 
 create or replace function public.create_default_categories(p_business_id uuid)
 returns void
@@ -373,6 +449,220 @@ begin
     (p_business_id, 'Electronics',    '#F59F00', 'phone-portrait'),
     (p_business_id, 'Clothing',       '#E64980', 'shirt'),
     (p_business_id, 'Health & Beauty','#7950F2', 'heart');
+end;
+$$;
+
+create or replace function public.get_business_payment_settings_summary()
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_settings public.business_payment_settings%rowtype;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.has_permission('manage_payments') then
+    raise exception 'You do not have permission to manage payments';
+  end if;
+
+  select *
+  into v_settings
+  from public.business_payment_settings
+  where business_id = public.my_business_id();
+
+  if not found then
+    return json_build_object(
+      'success', true,
+      'configured', false,
+      'provider', 'mpesa',
+      'is_enabled', false,
+      'environment', 'sandbox',
+      'till_type', 'paybill',
+      'shortcode', null,
+      'account_reference', null,
+      'has_consumer_key', false,
+      'has_consumer_secret', false,
+      'has_passkey', false,
+      'last_test_status', null,
+      'updated_at', null
+    );
+  end if;
+
+  return json_build_object(
+    'success', true,
+    'configured', true,
+    'provider', v_settings.provider,
+    'is_enabled', v_settings.is_enabled,
+    'environment', v_settings.environment,
+    'till_type', v_settings.till_type,
+    'shortcode', v_settings.shortcode,
+    'account_reference', v_settings.account_reference,
+    'has_consumer_key', nullif(trim(coalesce(v_settings.consumer_key, '')), '') is not null,
+    'has_consumer_secret', nullif(trim(coalesce(v_settings.consumer_secret, '')), '') is not null,
+    'has_passkey', nullif(trim(coalesce(v_settings.passkey, '')), '') is not null,
+    'last_test_status', v_settings.last_test_status,
+    'updated_at', v_settings.updated_at
+  );
+end;
+$$;
+
+create or replace function public.get_mpesa_checkout_status()
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_settings public.business_payment_settings%rowtype;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.has_permission('create_sale') and not public.has_permission('manage_payments') then
+    raise exception 'You do not have permission to use checkout';
+  end if;
+
+  select *
+  into v_settings
+  from public.business_payment_settings
+  where business_id = public.my_business_id()
+    and provider = 'mpesa';
+
+  if not found then
+    return json_build_object(
+      'configured', false,
+      'enabled', false,
+      'environment', 'sandbox',
+      'till_type', 'paybill',
+      'account_reference', null,
+      'shortcode_hint', null
+    );
+  end if;
+
+  return json_build_object(
+    'configured', true,
+    'enabled', coalesce(v_settings.is_enabled, false),
+    'environment', v_settings.environment,
+    'till_type', v_settings.till_type,
+    'account_reference', nullif(trim(coalesce(v_settings.account_reference, '')), ''),
+    'shortcode_hint',
+      case
+        when nullif(trim(coalesce(v_settings.shortcode, '')), '') is null then null
+        when length(trim(v_settings.shortcode)) <= 2 then repeat('*', length(trim(v_settings.shortcode)))
+        else left(trim(v_settings.shortcode), 2) || repeat('*', greatest(length(trim(v_settings.shortcode)) - 2, 3))
+      end
+  );
+end;
+$$;
+
+create or replace function public.upsert_business_payment_settings(
+  p_is_enabled boolean default false,
+  p_environment text default 'sandbox',
+  p_till_type text default 'paybill',
+  p_shortcode text default null,
+  p_consumer_key text default null,
+  p_consumer_secret text default null,
+  p_passkey text default null,
+  p_account_reference text default null
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business_id uuid := public.my_business_id();
+  v_existing public.business_payment_settings%rowtype;
+  v_shortcode text := nullif(trim(coalesce(p_shortcode, '')), '');
+  v_consumer_key text := nullif(trim(coalesce(p_consumer_key, '')), '');
+  v_consumer_secret text := nullif(trim(coalesce(p_consumer_secret, '')), '');
+  v_passkey text := nullif(trim(coalesce(p_passkey, '')), '');
+  v_account_reference text := nullif(trim(coalesce(p_account_reference, '')), '');
+  v_environment text := lower(trim(coalesce(p_environment, 'sandbox')));
+  v_till_type text := lower(trim(coalesce(p_till_type, 'paybill')));
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if v_business_id is null then
+    raise exception 'No business account found for this user';
+  end if;
+
+  if not public.has_permission('manage_payments') then
+    raise exception 'You do not have permission to manage payments';
+  end if;
+
+  if v_environment not in ('sandbox', 'live') then
+    raise exception 'Environment must be sandbox or live';
+  end if;
+
+  if v_till_type not in ('paybill', 'till') then
+    raise exception 'Till type must be paybill or till';
+  end if;
+
+  select *
+  into v_existing
+  from public.business_payment_settings
+  where business_id = v_business_id
+  for update;
+
+  if found then
+    update public.business_payment_settings
+    set is_enabled = coalesce(p_is_enabled, false),
+        environment = v_environment,
+        till_type = v_till_type,
+        shortcode = coalesce(v_shortcode, v_existing.shortcode),
+        consumer_key = coalesce(v_consumer_key, v_existing.consumer_key),
+        consumer_secret = coalesce(v_consumer_secret, v_existing.consumer_secret),
+        passkey = coalesce(v_passkey, v_existing.passkey),
+        account_reference = coalesce(v_account_reference, v_existing.account_reference),
+        updated_at = now()
+    where business_id = v_business_id
+    returning * into v_existing;
+  else
+    insert into public.business_payment_settings(
+      business_id,
+      provider,
+      is_enabled,
+      environment,
+      till_type,
+      shortcode,
+      consumer_key,
+      consumer_secret,
+      passkey,
+      account_reference
+    ) values (
+      v_business_id,
+      'mpesa',
+      coalesce(p_is_enabled, false),
+      v_environment,
+      v_till_type,
+      v_shortcode,
+      v_consumer_key,
+      v_consumer_secret,
+      v_passkey,
+      v_account_reference
+    )
+    returning * into v_existing;
+  end if;
+
+  if v_existing.is_enabled
+     and (
+       nullif(trim(coalesce(v_existing.shortcode, '')), '') is null
+       or nullif(trim(coalesce(v_existing.consumer_key, '')), '') is null
+       or nullif(trim(coalesce(v_existing.consumer_secret, '')), '') is null
+       or nullif(trim(coalesce(v_existing.passkey, '')), '') is null
+     ) then
+    raise exception 'Complete shortcode, consumer key, consumer secret, and passkey before enabling M-Pesa';
+  end if;
+
+  return public.get_business_payment_settings_summary();
 end;
 $$;
 
@@ -696,10 +986,12 @@ alter table public.roles            enable row level security;
 alter table public.profiles         enable row level security;
 alter table public.invitations      enable row level security;
 alter table public.client_access_tokens enable row level security;
+alter table public.business_payment_settings enable row level security;
 alter table public.categories       enable row level security;
 alter table public.products         enable row level security;
 alter table public.stock_movements  enable row level security;
 alter table public.sales            enable row level security;
+alter table public.payment_intents  enable row level security;
 alter table public.sale_items       enable row level security;
 alter table public.expenses         enable row level security;
 alter table public.notifications    enable row level security;
@@ -756,6 +1048,25 @@ create policy "client_access_tokens_select" on public.client_access_tokens
 
 create policy "client_access_tokens_update" on public.client_access_tokens
   for update using (public.is_super_admin());
+
+-- BUSINESS PAYMENT SETTINGS
+create policy "business_payment_settings_select" on public.business_payment_settings
+  for select using (
+    business_id = public.my_business_id()
+    and public.has_permission('manage_payments')
+  );
+
+create policy "business_payment_settings_insert" on public.business_payment_settings
+  for insert with check (
+    business_id = public.my_business_id()
+    and public.has_permission('manage_payments')
+  );
+
+create policy "business_payment_settings_update" on public.business_payment_settings
+  for update using (
+    business_id = public.my_business_id()
+    and public.has_permission('manage_payments')
+  );
 
 -- CATEGORIES
 create policy "categories_select" on public.categories
@@ -824,6 +1135,13 @@ create policy "sales_insert" on public.sales
 create policy "sales_update" on public.sales
   for update using (business_id = public.my_business_id());
 
+-- PAYMENT INTENTS
+create policy "payment_intents_select" on public.payment_intents
+  for select using (
+    business_id = public.my_business_id()
+    and public.has_permission('view_sales')
+  );
+
 -- SALE ITEMS
 create policy "sale_items_select" on public.sale_items
   for select using (
@@ -880,6 +1198,11 @@ create trigger set_updated_at_businesses
   before update on public.businesses
   for each row execute function public.handle_updated_at();
 
+drop trigger if exists set_updated_at_business_payment_settings on public.business_payment_settings;
+create trigger set_updated_at_business_payment_settings
+  before update on public.business_payment_settings
+  for each row execute function public.handle_updated_at();
+
 drop trigger if exists set_updated_at_products on public.products;
 create trigger set_updated_at_products
   before update on public.products
@@ -888,6 +1211,11 @@ create trigger set_updated_at_products
 drop trigger if exists set_updated_at_profiles on public.profiles;
 create trigger set_updated_at_profiles
   before update on public.profiles
+  for each row execute function public.handle_updated_at();
+
+drop trigger if exists set_updated_at_payment_intents on public.payment_intents;
+create trigger set_updated_at_payment_intents
+  before update on public.payment_intents
   for each row execute function public.handle_updated_at();
 
 -- Low stock alert trigger
@@ -1214,8 +1542,250 @@ begin
 end;
 $$;
 
+create or replace function public.complete_mpesa_sale_from_intent(
+  p_intent_id uuid
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_intent          public.payment_intents%rowtype;
+  v_sale_id         uuid;
+  v_item            jsonb;
+  v_product         record;
+  v_product_id      uuid;
+  v_quantity        integer;
+  v_items_count     integer := 0;
+  v_unit_price      numeric := 0;
+  v_cost_price      numeric := 0;
+  v_total_price     numeric := 0;
+  v_profit_value    numeric := 0;
+  v_discount        numeric := 0;
+  v_product_name    text;
+  v_payment_note    text;
+  v_created_by      uuid;
+begin
+  select *
+  into v_intent
+  from public.payment_intents
+  where id = p_intent_id
+  for update;
+
+  if not found then
+    return json_build_object(
+      'success', false,
+      'error', 'Payment intent not found'
+    );
+  end if;
+
+  if v_intent.sale_id is not null then
+    return json_build_object(
+      'success', true,
+      'sale_id', v_intent.sale_id,
+      'message', 'Sale already completed'
+    );
+  end if;
+
+  if v_intent.status not in ('paid', 'completed') then
+    return json_build_object(
+      'success', false,
+      'error', 'Payment is not ready for completion'
+    );
+  end if;
+
+  if v_intent.items_payload is null or jsonb_typeof(v_intent.items_payload) <> 'array' or jsonb_array_length(v_intent.items_payload) = 0 then
+    return json_build_object(
+      'success', false,
+      'error', 'Payment intent has no sale items'
+    );
+  end if;
+
+  select coalesce(sum(coalesce((item->>'quantity')::integer, 0)), 0)
+  into v_items_count
+  from jsonb_array_elements(v_intent.items_payload) item;
+
+  if v_items_count <= 0 then
+    return json_build_object(
+      'success', false,
+      'error', 'Payment intent items have invalid quantities'
+    );
+  end if;
+
+  v_created_by := coalesce((v_intent.sale_payload->>'sold_by')::uuid, v_intent.created_by);
+  v_payment_note := nullif(trim(coalesce(v_intent.sale_payload->>'notes', '')), '');
+
+  if nullif(trim(coalesce(v_intent.mpesa_receipt_number, '')), '') is not null then
+    v_payment_note := concat_ws(' | ', v_payment_note, 'M-Pesa receipt: ' || trim(v_intent.mpesa_receipt_number));
+  end if;
+
+  begin
+    insert into public.sales(
+      business_id,
+      reference_number,
+      sold_by,
+      customer_name,
+      customer_phone,
+      total_amount,
+      cost_total,
+      profit,
+      payment_method,
+      amount_tendered,
+      change_given,
+      status,
+      items_count,
+      notes
+    ) values (
+      v_intent.business_id,
+      v_intent.reference_number,
+      v_created_by,
+      nullif(trim(coalesce(v_intent.customer_name, v_intent.sale_payload->>'customer_name', '')), ''),
+      nullif(trim(coalesce(v_intent.customer_phone, '')), ''),
+      coalesce(v_intent.amount, 0),
+      coalesce((v_intent.sale_payload->>'cost_total')::numeric, 0),
+      coalesce((v_intent.sale_payload->>'profit')::numeric, 0),
+      'mpesa',
+      coalesce(v_intent.amount, 0),
+      0,
+      'completed',
+      v_items_count,
+      v_payment_note
+    )
+    returning id into v_sale_id;
+
+    for v_item in select * from jsonb_array_elements(v_intent.items_payload)
+    loop
+      v_product_id := (v_item->>'product_id')::uuid;
+      v_quantity := coalesce((v_item->>'quantity')::integer, 0);
+      v_unit_price := coalesce((v_item->>'unit_price')::numeric, 0);
+      v_cost_price := coalesce((v_item->>'cost_price')::numeric, 0);
+      v_total_price := coalesce((v_item->>'total_price')::numeric, v_unit_price * v_quantity);
+      v_profit_value := coalesce((v_item->>'profit')::numeric, v_total_price - (v_cost_price * v_quantity));
+      v_discount := coalesce((v_item->>'discount')::numeric, 0);
+
+      if v_quantity <= 0 then
+        raise exception 'Invalid quantity for sale item';
+      end if;
+
+      select id, business_id, name, quantity
+      into v_product
+      from public.products
+      where id = v_product_id
+        and business_id = v_intent.business_id
+        and is_active = true
+      for update;
+
+      if not found then
+        raise exception 'Product not found or inactive';
+      end if;
+
+      if v_product.quantity < v_quantity then
+        raise exception 'Insufficient stock for product %. Available: %, Requested: %',
+          v_product.name, v_product.quantity, v_quantity;
+      end if;
+
+      v_product_name := coalesce(nullif(trim(v_item->>'product_name'), ''), v_product.name);
+
+      update public.products
+      set quantity = v_product.quantity - v_quantity
+      where id = v_product.id;
+
+      insert into public.sale_items(
+        sale_id,
+        product_id,
+        product_name,
+        quantity,
+        unit_price,
+        cost_price,
+        total_price,
+        profit,
+        discount
+      ) values (
+        v_sale_id,
+        v_product.id,
+        v_product_name,
+        v_quantity,
+        v_unit_price,
+        v_cost_price,
+        v_total_price,
+        v_profit_value,
+        v_discount
+      );
+
+      insert into public.stock_movements(
+        product_id,
+        business_id,
+        type,
+        quantity,
+        reference,
+        performed_by,
+        notes
+      ) values (
+        v_product.id,
+        v_intent.business_id,
+        'sale',
+        -v_quantity,
+        v_intent.reference_number,
+        v_created_by,
+        'M-Pesa sale: ' || v_intent.reference_number
+      );
+    end loop;
+
+    update public.payment_intents
+    set sale_id = v_sale_id,
+        status = 'completed',
+        completed_at = now(),
+        error_message = null
+    where id = v_intent.id;
+
+    return json_build_object(
+      'success', true,
+      'sale_id', v_sale_id,
+      'reference_number', v_intent.reference_number
+    );
+  exception when others then
+    update public.payment_intents
+    set error_message = SQLERRM,
+        updated_at = now()
+    where id = v_intent.id;
+
+    insert into public.notifications(
+      business_id,
+      user_id,
+      type,
+      title,
+      message,
+      data
+    ) values (
+      v_intent.business_id,
+      v_intent.created_by,
+      'payment_review',
+      'M-Pesa payment needs review',
+      'Payment for ' || v_intent.reference_number || ' was received, but BizFlow could not complete the sale automatically.',
+      jsonb_build_object(
+        'payment_intent_id', v_intent.id,
+        'reference_number', v_intent.reference_number,
+        'error', SQLERRM,
+        'status', v_intent.status
+      )
+    );
+
+    return json_build_object(
+      'success', false,
+      'error', SQLERRM,
+      'status', v_intent.status
+    );
+  end;
+end;
+$$;
+
 grant execute on function public.process_sale(uuid, text, uuid, text, text, numeric, numeric, numeric, text, numeric, numeric, text, jsonb) to authenticated;
 grant execute on function public.void_sale_atomic(uuid, uuid, text) to authenticated;
+grant execute on function public.get_business_payment_settings_summary() to authenticated;
+grant execute on function public.get_mpesa_checkout_status() to authenticated;
+grant execute on function public.upsert_business_payment_settings(boolean, text, text, text, text, text, text, text) to authenticated;
+grant execute on function public.complete_mpesa_sale_from_intent(uuid) to service_role;
 
 -- ============================================================
 -- 8. REALTIME PUBLICATION
@@ -1292,6 +1862,20 @@ begin
     ) then
       alter publication supabase_realtime add table public.client_access_tokens;
     end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'business_payment_settings'
+    ) then
+      alter publication supabase_realtime add table public.business_payment_settings;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'payment_intents'
+    ) then
+      alter publication supabase_realtime add table public.payment_intents;
+    end if;
   end if;
 end $$;
 
@@ -1352,6 +1936,7 @@ revoke execute on function public.create_default_roles(uuid) from anon, authenti
 revoke execute on function public.create_default_categories(uuid) from anon, authenticated;
 revoke execute on function public.bootstrap_admin(uuid, text, text, text) from anon, authenticated;
 revoke execute on function public.promote_super_admin(uuid) from anon, authenticated;
+revoke execute on function public.complete_mpesa_sale_from_intent(uuid) from anon, authenticated;
 grant execute on function public.register_admin_with_access_token(text, uuid, text, text, text) to anon, authenticated;
 grant execute on function public.verify_client_access_token(text) to anon, authenticated;
 grant execute on function public.generate_client_access_token(text, text, text) to authenticated;

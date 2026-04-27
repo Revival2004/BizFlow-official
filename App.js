@@ -20,6 +20,7 @@ function Root() {
 function StartupSplash({ onFinish }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.96)).current;
+  const lineOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const animation = Animated.sequence([
@@ -33,6 +34,12 @@ function StartupSplash({ onFinish }) {
         Animated.timing(scale, {
           toValue: 1,
           duration: 850,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(lineOpacity, {
+          toValue: 1,
+          duration: 620,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
@@ -56,6 +63,12 @@ function StartupSplash({ onFinish }) {
           easing: Easing.in(Easing.ease),
           useNativeDriver: true,
         }),
+        Animated.timing(lineOpacity, {
+          toValue: 0,
+          duration: 500,
+          easing: Easing.in(Easing.ease),
+          useNativeDriver: true,
+        }),
         Animated.timing(scale, {
           toValue: 1.04,
           duration: 700,
@@ -74,8 +87,9 @@ function StartupSplash({ onFinish }) {
     return () => {
       opacity.stopAnimation();
       scale.stopAnimation();
+      lineOpacity.stopAnimation();
     };
-  }, [onFinish, opacity, scale]);
+  }, [lineOpacity, onFinish, opacity, scale]);
 
   return (
     <Animated.View style={[styles.splashOverlay, { opacity }]}>
@@ -88,8 +102,9 @@ function StartupSplash({ onFinish }) {
       >
         <Text style={styles.splashWord}>
           <Text style={styles.splashWordAccent}>B</Text>
-          <Text style={styles.splashWordMain}>flow</Text>
+          <Text style={styles.splashWordMain}>Flow</Text>
         </Text>
+        <Animated.View style={[styles.splashLine, { opacity: lineOpacity }]} />
       </Animated.View>
     </Animated.View>
   );
@@ -126,17 +141,28 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#06070D',
+    backgroundColor: '#040B18',
   },
   splashWord: {
-    fontSize: 48,
-    fontWeight: '800',
-    letterSpacing: 2,
+    fontSize: 54,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    textShadowColor: 'rgba(59, 130, 246, 0.18)',
+    textShadowOffset: { width: 0, height: 8 },
+    textShadowRadius: 18,
   },
   splashWordAccent: {
-    color: '#22C55E',
+    color: '#3B82F6',
   },
   splashWordMain: {
     color: '#F8FAFC',
+  },
+  splashLine: {
+    alignSelf: 'center',
+    width: 168,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: '#60A5FA',
+    marginTop: 16,
   },
 });

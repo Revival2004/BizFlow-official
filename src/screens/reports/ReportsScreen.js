@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator,
   TextInput, Alert, Modal, Platform,
@@ -13,11 +13,52 @@ import { useTheme } from '../../context/ThemeContext';
 import { fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
+import { cleanText } from '../../utils/textEncoding';
+
+const UTF8_BOM = '\uFEFF';
+
+const escapeCsvValue = (value) => {
+  const normalized = String(value ?? '')
+    .replace(/\r?\n/g, ' ')
+    .replace(/"/g, '""');
+
+  return `"${normalized}"`;
+};
+
+const buildCsvContent = ({ sales, period, summary }) => {
+  const rows = [
+    ['Reference', 'Date', 'Customer', 'Staff', 'Items', 'Total (KES)', 'Cost (KES)', 'Profit (KES)', 'Payment', 'Status'],
+    ...sales.map((sale) => [
+      cleanText(sale.reference_number || ''),
+      new Date(sale.created_at).toLocaleString(),
+      cleanText(sale.customer_name || 'Walk-in'),
+      cleanText(sale.sellerName || ''),
+      sale.items_count ?? sale.sale_items?.length ?? 0,
+      Number(sale.total_amount || 0).toFixed(2),
+      Number(sale.cost_total || 0).toFixed(2),
+      Number(sale.profit || 0).toFixed(2),
+      cleanText(sale.payment_method || ''),
+      cleanText(sale.status || ''),
+    ]),
+    [],
+    ['SUMMARY'],
+    ['Period', period],
+    ['Total Sales', summary?.totalSales || 0],
+    ['Total Revenue (KES)', Number(summary?.totalRevenue || 0).toFixed(2)],
+    ['Total Profit (KES)', Number(summary?.totalProfit || 0).toFixed(2)],
+    ['Margin', `${Number(summary?.margin || 0).toFixed(1)}%`],
+  ];
+
+  return UTF8_BOM + rows.map((row) => row.map(escapeCsvValue).join(',')).join('\r\n');
+};
 
 export default function ReportsScreen() {
   const { profile, hasPermission } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const reportRequestRef = useRef(0);
+  const productRequestRef = useRef(0);
+  const itemRequestRef = useRef(0);
   const [period, setPeriod] = useState('week');
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -40,6 +81,14 @@ export default function ReportsScreen() {
   }, [profile?.business_id]);
 
   const fetchAllProducts = async () => {
+    if (!profile?.business_id) {
+      setAllProducts([]);
+      return;
+    }
+
+    const requestId = Date.now();
+    productRequestRef.current = requestId;
+
     try {
       const { data: products, error } = await supabase
         .from('products')
@@ -51,7 +100,9 @@ export default function ReportsScreen() {
         throw error;
       }
 
-      setAllProducts(products || []);
+      if (productRequestRef.current === requestId) {
+        setAllProducts(products || []);
+      }
     } catch (error) {
       console.error(error);
     }
@@ -77,7 +128,17 @@ export default function ReportsScreen() {
   };
 
   const fetchReport = async () => {
+    if (!profile?.business_id) {
+      setData(null);
+      setTopProducts([]);
+      setSalesByDay([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
+    const requestId = Date.now();
+    reportRequestRef.current = requestId;
 
     try {
       const { start } = getDateRange();
@@ -142,6 +203,10 @@ export default function ReportsScreen() {
         });
       }
 
+      if (reportRequestRef.current !== requestId) {
+        return;
+      }
+
       setData({
         totalRevenue,
         totalCost,
@@ -154,9 +219,13 @@ export default function ReportsScreen() {
       setTopProducts(Object.values(productMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10));
       setSalesByDay(days);
     } catch (error) {
-      Alert.alert('Error', error.message);
+      if (reportRequestRef.current === requestId) {
+        Alert.alert('Error', error.message);
+      }
     } finally {
-      setLoading(false);
+      if (reportRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
   };
 
@@ -210,6 +279,10 @@ export default function ReportsScreen() {
       return;
     }
 
+    if (exporting) {
+      return;
+    }
+
     setExporting(true);
 
     try {
@@ -227,29 +300,11 @@ export default function ReportsScreen() {
       }
 
       const sales = await attachSellerNames(rawSales || []);
-      let csv = 'Reference,Date,Customer,Staff,Items,Total (KES),Cost (KES),Profit (KES),Payment,Status\n';
-
-      (sales || []).forEach((sale) => {
-        csv += [
-          sale.reference_number,
-          new Date(sale.created_at).toLocaleString(),
-          sale.customer_name || 'Walk-in',
-          sale.sellerName || '',
-          sale.items_count,
-          Number(sale.total_amount || 0).toFixed(2),
-          Number(sale.cost_total || 0).toFixed(2),
-          Number(sale.profit || 0).toFixed(2),
-          sale.payment_method,
-          sale.status,
-        ].map((value) => `"${value}"`).join(',') + '\n';
+      const csv = buildCsvContent({
+        sales,
+        period,
+        summary: data,
       });
-
-      csv += '\nSUMMARY\n';
-      csv += `Period,${period}\n`;
-      csv += `Total Sales,${data?.totalSales || 0}\n`;
-      csv += `Total Revenue (KES),${Number(data?.totalRevenue || 0).toFixed(2)}\n`;
-      csv += `Total Profit (KES),${Number(data?.totalProfit || 0).toFixed(2)}\n`;
-      csv += `Margin,${Number(data?.margin || 0).toFixed(1)}%\n`;
 
       const filename = `BizFlow_Report_${period}_${Date.now()}.csv`;
 
@@ -276,11 +331,14 @@ export default function ReportsScreen() {
   };
 
   const searchItem = async (name) => {
-    if (!name.trim()) {
+    const searchName = cleanText(name || '').trim();
+    if (!searchName || searchingItem) {
       return;
     }
 
     setSearchingItem(true);
+    const requestId = Date.now();
+    itemRequestRef.current = requestId;
 
     try {
       const { start } = getDateRange();
@@ -290,17 +348,21 @@ export default function ReportsScreen() {
         .eq('sales.business_id', profile.business_id)
         .eq('sales.status', 'completed')
         .gte('sales.created_at', start)
-        .ilike('product_name', `%${name.trim()}%`);
+        .ilike('product_name', `%${searchName}%`);
 
       if (error) {
         throw error;
       }
 
+      if (itemRequestRef.current !== requestId) {
+        return;
+      }
+
       if (!items || items.length === 0) {
-        setItemResult({ notFound: true, name });
+        setItemResult({ notFound: true, name: searchName });
       } else {
         setItemResult({
-          name: items[0].product_name,
+          name: cleanText(items[0].product_name || searchName),
           totalQty: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
           totalRev: items.reduce((sum, item) => sum + Number(item.total_price || 0), 0),
           totalProfit: items.reduce((sum, item) => sum + Number(item.profit || 0), 0),
@@ -309,9 +371,13 @@ export default function ReportsScreen() {
         });
       }
     } catch (error) {
-      Alert.alert('Error', error.message);
+      if (itemRequestRef.current === requestId) {
+        Alert.alert('Error', error.message);
+      }
     } finally {
-      setSearchingItem(false);
+      if (itemRequestRef.current === requestId) {
+        setSearchingItem(false);
+      }
     }
   };
 
@@ -403,7 +469,7 @@ export default function ReportsScreen() {
                   <Text style={{ fontSize: 11, fontWeight: '700', color: colors.secondary }}>#{index + 1}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{product.name}</Text>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{cleanText(product.name || '')}</Text>
                   <Text style={{ fontSize: 11, color: colors.textLight }}>{product.qty} sold</Text>
                 </View>
                 <View style={{ alignItems: 'flex-end' }}>
@@ -433,8 +499,11 @@ export default function ReportsScreen() {
                 value={itemSearch}
                 onChangeText={(text) => {
                   setItemSearch(text);
-                  if (text.length > 1) {
-                    setItemSuggestions(allProducts.filter((product) => product.name.toLowerCase().includes(text.toLowerCase())).slice(0, 5));
+                  const normalizedQuery = cleanText(text || '').toLowerCase();
+                  if (normalizedQuery.length > 1) {
+                    setItemSuggestions(
+                      allProducts.filter((product) => cleanText(product.name || '').toLowerCase().includes(normalizedQuery)).slice(0, 5)
+                    );
                   } else {
                     setItemSuggestions([]);
                   }
@@ -450,7 +519,7 @@ export default function ReportsScreen() {
               <View style={{ backgroundColor: colors.inputBg, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: colors.border }}>
                 {itemSuggestions.map((suggestion) => (
                   <TouchableOpacity key={suggestion.id} style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }} onPress={() => { setItemSearch(suggestion.name); setItemSuggestions([]); searchItem(suggestion.name); }}>
-                    <Text style={{ color: colors.text, fontSize: 14 }}>{suggestion.name}</Text>
+                    <Text style={{ color: colors.text, fontSize: 14 }}>{cleanText(suggestion.name || '')}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

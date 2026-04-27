@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Bflow",
+    "name": "BFlow",
     "slug": "bizflow",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -9,13 +9,13 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#1A1F36"
+      "backgroundColor": "#040B18"
     },
     "scheme": "bizflow",
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#1A1F36"
+        "backgroundColor": "#F3F8FF"
       },
       "package": "com.revival2004.bizflow",
       "versionCode": 1,
@@ -23,8 +23,15 @@
         {
           "action": "VIEW",
           "autoVerify": true,
-          "data": [{ "scheme": "bizflow" }],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "data": [
+            {
+              "scheme": "bizflow"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -35,6 +42,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "0eeb4763-5c7b-4732-98cc-307f7d55b1f5"
+      }
+    },
+    "owner": "medeveloping"
   }
 }

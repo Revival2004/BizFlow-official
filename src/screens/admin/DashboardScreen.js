@@ -28,6 +28,15 @@ export default function DashboardScreen({ navigation }) {
   const [endDayModal, setEndDayModal] = useState(false);
   const [syncBanner, setSyncBanner] = useState(false);
   const [dayEnded, setDayEnded] = useState(false);
+  const openSecondaryScreen = (routeName) => {
+    const parentNavigation = navigation.getParent?.();
+    if (parentNavigation?.navigate) {
+      parentNavigation.navigate(routeName);
+      return;
+    }
+
+    navigation.navigate(routeName);
+  };
 
   useEffect(() => {
     if (!profile?.business_id || !profile?.id) {
@@ -314,7 +323,7 @@ export default function DashboardScreen({ navigation }) {
             </TouchableOpacity>
           )}
           {hasPermission('manage_staff') && (
-            <TouchableOpacity style={{ flex: 1, backgroundColor: '#334155', borderRadius: 16, padding: 14, alignItems: 'center', gap: 6, elevation: 3 }} onPress={() => navigation.navigate('Staff')}>
+            <TouchableOpacity style={{ flex: 1, backgroundColor: '#334155', borderRadius: 16, padding: 14, alignItems: 'center', gap: 6, elevation: 3 }} onPress={() => openSecondaryScreen('Staff')}>
               <Ionicons name="people" size={26} color="#fff" />
               <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Staff</Text>
             </TouchableOpacity>
