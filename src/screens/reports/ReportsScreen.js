@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator,
   TextInput, Alert, Modal, Platform,
@@ -6,7 +6,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
@@ -25,6 +25,13 @@ const escapeCsvValue = (value) => {
     .replace(/"/g, '""');
 
   return `"${normalized}"`;
+};
+
+const PERIOD_LABELS = {
+  today: 'Today',
+  week: 'This Week',
+  month: 'This Month',
+  year: 'This Year',
 };
 
 const buildCsvContent = ({ sales, period, summary }) => {
@@ -72,8 +79,9 @@ export default function ReportsScreen() {
   const [itemResult, setItemResult] = useState(null);
   const [searchingItem, setSearchingItem] = useState(false);
   const [allProducts, setAllProducts] = useState([]);
-  const [itemSuggestions, setItemSuggestions] = useState([]);
   const [isOffline, setIsOffline] = useState(false);
+  const [fastMovers, setFastMovers] = useState([]);
+  const deferredItemSearch = useDeferredValue(itemSearch);
 
   useEffect(() => {
     fetchReport();
@@ -116,13 +124,17 @@ export default function ReportsScreen() {
       }
 
       if (productRequestRef.current === requestId) {
-        setAllProducts(products || []);
+        startTransition(() => {
+          setAllProducts(products || []);
+        });
       }
     } catch (error) {
       console.error(error);
       const cachedStock = await getCachedStockSnapshot(profile?.business_id);
       if (productRequestRef.current === requestId && cachedStock?.products) {
-        setAllProducts((cachedStock.products || []).map((product) => ({ id: product.id, name: product.name })));
+        startTransition(() => {
+          setAllProducts((cachedStock.products || []).map((product) => ({ id: product.id, name: product.name })));
+        });
       }
     }
   };
@@ -146,10 +158,18 @@ export default function ReportsScreen() {
     return { start: start.toISOString(), end: end.toISOString() };
   };
 
+  const normalizedItemQuery = cleanText(deferredItemSearch || '').toLowerCase().trim();
+  const itemSuggestions = normalizedItemQuery.length > 1
+    ? allProducts
+      .filter((product) => cleanText(product.name || '').toLowerCase().includes(normalizedItemQuery))
+      .slice(0, 5)
+    : [];
+
   const fetchReport = async () => {
     if (!profile?.business_id) {
       setData(null);
       setTopProducts([]);
+      setFastMovers([]);
       setSalesByDay([]);
       setLoading(false);
       return;
@@ -161,7 +181,7 @@ export default function ReportsScreen() {
 
     try {
       const { start } = getDateRange();
-      const [salesRes, itemsRes] = await Promise.all([
+      const [salesRes, itemsRes, productsRes] = await Promise.all([
         supabase
           .from('sales')
           .select('*')
@@ -174,6 +194,11 @@ export default function ReportsScreen() {
           .eq('sales.business_id', profile.business_id)
           .eq('sales.status', 'completed')
           .gte('sales.created_at', start),
+        supabase
+          .from('products')
+          .select('id, name, quantity, reorder_level, unit')
+          .eq('business_id', profile.business_id)
+          .eq('is_active', true),
       ]);
 
       if (salesRes.error) {
@@ -184,80 +209,139 @@ export default function ReportsScreen() {
         throw itemsRes.error;
       }
 
+      if (productsRes.error) {
+        throw productsRes.error;
+      }
+
       const sales = salesRes.data || [];
       const items = itemsRes.data || [];
+      const products = productsRes.data || [];
       const totalRevenue = sales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
       const totalCost = sales.reduce((sum, sale) => sum + Number(sale.cost_total || 0), 0);
       const totalProfit = sales.reduce((sum, sale) => sum + Number(sale.profit || 0), 0);
+      const productLookup = new Map(
+        products.map((product) => [product.id, {
+          id: product.id,
+          name: cleanText(product.name || ''),
+          quantity: Number(product.quantity || 0),
+          reorderLevel: Number(product.reorder_level || 0),
+          unit: cleanText(product.unit || 'pcs'),
+        }]),
+      );
 
       const productMap = {};
       items.forEach((item) => {
-        if (!productMap[item.product_name]) {
-          productMap[item.product_name] = { name: item.product_name, qty: 0, revenue: 0, profit: 0 };
+        const productMeta = item.product_id ? productLookup.get(item.product_id) : null;
+        const key = item.product_id || cleanText(item.product_name || '');
+
+        if (!productMap[key]) {
+          productMap[key] = {
+            id: item.product_id || key,
+            name: cleanText(item.product_name || productMeta?.name || 'Unnamed item'),
+            qty: 0,
+            revenue: 0,
+            profit: 0,
+            saleIds: new Set(),
+            currentStock: Number(productMeta?.quantity || 0),
+            reorderLevel: Number(productMeta?.reorderLevel || 0),
+            unit: productMeta?.unit || 'pcs',
+          };
         }
 
-        productMap[item.product_name].qty += Number(item.quantity || 0);
-        productMap[item.product_name].revenue += Number(item.total_price || 0);
-        productMap[item.product_name].profit += Number(item.profit || 0);
+        productMap[key].qty += Number(item.quantity || 0);
+        productMap[key].revenue += Number(item.total_price || 0);
+        productMap[key].profit += Number(item.profit || 0);
+        if (item.sale_id) {
+          productMap[key].saleIds.add(item.sale_id);
+        }
       });
 
-      const days = [];
-      for (let index = 6; index >= 0; index -= 1) {
+      const productEntries = Object.values(productMap).map(({ saleIds, ...product }) => ({
+        ...product,
+        salesCount: saleIds.size,
+      }));
+      const daysInRange = Math.max(1, Math.ceil((Date.now() - new Date(start).getTime()) / (1000 * 60 * 60 * 24)));
+      const totalItemsSold = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+      const days = Array.from({ length: 7 }, (_, index) => {
         const day = new Date();
-        day.setDate(day.getDate() - index);
+        day.setDate(day.getDate() - (6 - index));
         day.setHours(0, 0, 0, 0);
 
-        const nextDay = new Date(day);
-        nextDay.setDate(nextDay.getDate() + 1);
-
-        const daySales = sales.filter((sale) => {
-          const saleDate = new Date(sale.created_at);
-          return saleDate >= day && saleDate < nextDay;
-        });
-
-        days.push({
+        return {
+          key: day.toISOString().slice(0, 10),
           label: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day.getDay()],
-          revenue: daySales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0),
-          count: daySales.length,
-        });
-      }
+          revenue: 0,
+          count: 0,
+        };
+      });
+      const dayLookup = new Map(days.map((day) => [day.key, day]));
+
+      sales.forEach((sale) => {
+        const saleDay = new Date(sale.created_at);
+        saleDay.setHours(0, 0, 0, 0);
+        const bucket = dayLookup.get(saleDay.toISOString().slice(0, 10));
+
+        if (!bucket) {
+          return;
+        }
+
+        bucket.revenue += Number(sale.total_amount || 0);
+        bucket.count += 1;
+      });
 
       if (reportRequestRef.current !== requestId) {
         return;
       }
 
-      setData({
+      const nextData = {
         totalRevenue,
         totalCost,
         totalProfit,
         avgOrder: sales.length > 0 ? totalRevenue / sales.length : 0,
         margin: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
         totalSales: sales.length,
-        totalItems: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+        totalItems: totalItemsSold,
+      };
+      const nextTopProducts = [...productEntries].sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+      const nextFastMovers = [...productEntries]
+        .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue)
+        .slice(0, 5)
+        .map((product, index) => {
+          const dailyVelocity = product.qty / daysInRange;
+          const coverDays = dailyVelocity > 0 ? product.currentStock / dailyVelocity : null;
+          const needsRestock = product.currentStock <= product.reorderLevel || (coverDays !== null && coverDays <= 7);
+          const watchStock = !needsRestock && coverDays !== null && coverDays <= 14;
+
+          return {
+            ...product,
+            rank: index + 1,
+            dailyVelocity,
+            coverDays,
+            status: needsRestock ? 'Restock Soon' : watchStock ? 'Watch Stock' : 'Fast Moving',
+          };
+        });
+      startTransition(() => {
+        setData(nextData);
+        setTopProducts(nextTopProducts);
+        setFastMovers(nextFastMovers);
+        setSalesByDay(days);
       });
-      const nextTopProducts = Object.values(productMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10);
-      setTopProducts(nextTopProducts);
-      setSalesByDay(days);
       await cacheReportSnapshot(profile.business_id, period, {
-        data: {
-          totalRevenue,
-          totalCost,
-          totalProfit,
-          avgOrder: sales.length > 0 ? totalRevenue / sales.length : 0,
-          margin: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
-          totalSales: sales.length,
-          totalItems: items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
-        },
+        data: nextData,
         topProducts: nextTopProducts,
+        fastMovers: nextFastMovers,
         salesByDay: days,
       });
     } catch (error) {
       if (reportRequestRef.current === requestId) {
         const cached = await getCachedReportSnapshot(profile?.business_id, period);
         if (cached) {
-          setData(cached.data || null);
-          setTopProducts(cached.topProducts || []);
-          setSalesByDay(cached.salesByDay || []);
+          startTransition(() => {
+            setData(cached.data || null);
+            setTopProducts(cached.topProducts || []);
+            setFastMovers(cached.fastMovers || []);
+            setSalesByDay(cached.salesByDay || []);
+          });
         } else {
           Alert.alert('Error', error.message);
         }
@@ -354,8 +438,13 @@ export default function ReportsScreen() {
         return;
       }
 
-      const path = (FileSystem.documentDirectory || FileSystem.cacheDirectory) + filename;
-      await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
+      const directory = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+      if (!directory) {
+        throw new Error('This device does not expose a writable folder for CSV export.');
+      }
+
+      const path = directory + filename;
+      await FileSystem.writeAsStringAsync(path, csv);
 
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
@@ -509,6 +598,58 @@ export default function ReportsScreen() {
               </View>
             </View>
 
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 10 }}>Fast Movers</Text>
+            {fastMovers.length === 0 ? (
+              <View style={{ backgroundColor: colors.card, borderRadius: 14, padding: 28, alignItems: 'center', marginBottom: 14 }}>
+                <Text style={{ color: colors.textLight }}>No fast-moving items identified for {PERIOD_LABELS[period] || period} yet</Text>
+              </View>
+            ) : fastMovers.map((product) => {
+              const statusColor = product.status === 'Restock Soon'
+                ? colors.danger
+                : product.status === 'Watch Stock'
+                  ? colors.warning
+                  : colors.success;
+
+              return (
+                <View key={product.id} style={{ backgroundColor: colors.card, borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: colors.secondary + '18', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: colors.secondary }}>#{product.rank}</Text>
+                        </View>
+                        <Text style={{ flex: 1, fontSize: 14, fontWeight: '800', color: colors.text }}>{cleanText(product.name || '')}</Text>
+                      </View>
+                      <Text style={{ fontSize: 11, color: colors.textLight }}>
+                        {product.qty} sold across {product.salesCount} sale{product.salesCount === 1 ? '' : 's'} in {PERIOD_LABELS[period] || period}
+                      </Text>
+                    </View>
+                    <View style={{ backgroundColor: statusColor + '18', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: statusColor }}>{product.status}</Text>
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+                    {[
+                      { label: 'Revenue', value: fmt(product.revenue), color: colors.secondary },
+                      { label: 'Profit', value: hasPermission('view_profits') ? fmt(product.profit) : 'Hidden', color: hasPermission('view_profits') ? colors.success : colors.textLight },
+                      { label: 'Daily Pace', value: `${product.dailyVelocity.toFixed(1)}/${product.unit}`, color: colors.warning },
+                      {
+                        label: 'Stock Cover',
+                        value: product.coverDays !== null ? `${product.coverDays.toFixed(1)} days` : 'n/a',
+                        color: statusColor,
+                      },
+                    ].filter((metric) => metric.label !== 'Profit' || hasPermission('view_profits')).map((metric) => (
+                      <View key={metric.label} style={{ flex: 1, minWidth: '45%', backgroundColor: colors.bg, borderRadius: 12, padding: 12 }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textLight, marginBottom: 4 }}>{metric.label}</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '800', color: metric.color }}>{metric.value}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              );
+            })}
+
             <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 10 }}>Top Products</Text>
             {topProducts.length === 0 ? (
               <View style={{ backgroundColor: colors.card, borderRadius: 14, padding: 28, alignItems: 'center' }}>
@@ -538,7 +679,7 @@ export default function ReportsScreen() {
           <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '80%', paddingBottom: 24 + insets.bottom }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>Item Report</Text>
-              <TouchableOpacity onPress={() => { setItemModal(false); setItemResult(null); setItemSearch(''); setItemSuggestions([]); }}>
+              <TouchableOpacity onPress={() => { setItemModal(false); setItemResult(null); setItemSearch(''); }}>
                 <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -548,20 +689,10 @@ export default function ReportsScreen() {
                 style={{ flex: 1, borderWidth: 1.5, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 14, height: 46, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg }}
                 placeholder="Search product name..."
                 value={itemSearch}
-                onChangeText={(text) => {
-                  setItemSearch(text);
-                  const normalizedQuery = cleanText(text || '').toLowerCase();
-                  if (normalizedQuery.length > 1) {
-                    setItemSuggestions(
-                      allProducts.filter((product) => cleanText(product.name || '').toLowerCase().includes(normalizedQuery)).slice(0, 5)
-                    );
-                  } else {
-                    setItemSuggestions([]);
-                  }
-                }}
+                onChangeText={(text) => setItemSearch(text)}
                 placeholderTextColor={colors.textLight}
               />
-              <TouchableOpacity style={{ backgroundColor: colors.secondary, borderRadius: 12, width: 46, alignItems: 'center', justifyContent: 'center' }} onPress={() => { searchItem(itemSearch); setItemSuggestions([]); }}>
+              <TouchableOpacity style={{ backgroundColor: colors.secondary, borderRadius: 12, width: 46, alignItems: 'center', justifyContent: 'center' }} onPress={() => searchItem(itemSearch)}>
                 {searchingItem ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="search" size={20} color="#fff" />}
               </TouchableOpacity>
             </View>
@@ -569,7 +700,7 @@ export default function ReportsScreen() {
             {itemSuggestions.length > 0 && (
               <View style={{ backgroundColor: colors.inputBg, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: colors.border }}>
                 {itemSuggestions.map((suggestion) => (
-                  <TouchableOpacity key={suggestion.id} style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }} onPress={() => { setItemSearch(suggestion.name); setItemSuggestions([]); searchItem(suggestion.name); }}>
+                  <TouchableOpacity key={suggestion.id} style={{ padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border }} onPress={() => { setItemSearch(suggestion.name); searchItem(suggestion.name); }}>
                     <Text style={{ color: colors.text, fontSize: 14 }}>{cleanText(suggestion.name || '')}</Text>
                   </TouchableOpacity>
                 ))}

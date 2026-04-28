@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, ActivityIndicator, Modal, ScrollView, Alert,
@@ -13,6 +13,9 @@ import { cleanObject, cleanText } from '../../utils/textEncoding';
 
 export default function SalesHistoryScreen() {
   const { profile, hasPermission } = useAuth();
+  const salesRequestRef = useRef(0);
+  const saleItemsRequestRef = useRef(0);
+  const voidingRef = useRef(false);
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -20,10 +23,13 @@ export default function SalesHistoryScreen() {
   const [selectedSale, setSelectedSale] = useState(null);
   const [saleItems, setSaleItems] = useState([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
     if (!profile?.business_id) {
       setSales([]);
+      setSelectedSale(null);
+      setSaleItems([]);
       setLoading(false);
       return;
     }
@@ -37,6 +43,8 @@ export default function SalesHistoryScreen() {
     }
 
     setLoading(true);
+    const requestId = Date.now();
+    salesRequestRef.current = requestId;
 
     try {
       let query = supabase
@@ -68,22 +76,36 @@ export default function SalesHistoryScreen() {
       }
 
       const nextSales = cleanObject(await attachSellerNames(data || []));
-      setSales(nextSales);
+      if (salesRequestRef.current !== requestId) {
+        return;
+      }
+
+      startTransition(() => {
+        setSales(nextSales);
+      });
 
       if (selectedSale?.id) {
         const refreshedSale = nextSales.find((entry) => entry.id === selectedSale.id);
-        setSelectedSale(refreshedSale || null);
+        startTransition(() => {
+          setSelectedSale(refreshedSale || null);
+        });
 
         if (refreshedSale) {
           await fetchSaleItems(refreshedSale.id);
         } else {
-          setSaleItems([]);
+          startTransition(() => {
+            setSaleItems([]);
+          });
         }
       }
     } catch (error) {
-      Alert.alert('Error', error.message);
+      if (salesRequestRef.current === requestId) {
+        Alert.alert('Error', error.message);
+      }
     } finally {
-      setLoading(false);
+      if (salesRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
   };
 
@@ -91,6 +113,9 @@ export default function SalesHistoryScreen() {
     if (showLoader) {
       setLoadingItems(true);
     }
+
+    const requestId = Date.now();
+    saleItemsRequestRef.current = requestId;
 
     try {
       const { data, error } = await supabase
@@ -104,13 +129,21 @@ export default function SalesHistoryScreen() {
       }
 
       const nextItems = cleanObject(data || []);
-      setSaleItems(nextItems);
+      if (saleItemsRequestRef.current !== requestId) {
+        return [];
+      }
+
+      startTransition(() => {
+        setSaleItems(nextItems);
+      });
       return nextItems;
     } catch (error) {
-      Alert.alert('Error', error.message);
+      if (saleItemsRequestRef.current === requestId) {
+        Alert.alert('Error', error.message);
+      }
       return [];
     } finally {
-      if (showLoader) {
+      if (showLoader && saleItemsRequestRef.current === requestId) {
         setLoadingItems(false);
       }
     }
@@ -153,12 +186,22 @@ export default function SalesHistoryScreen() {
       return;
     }
 
+    if (voidingRef.current) {
+      return;
+    }
+
     Alert.alert('Void Sale', 'Are you sure? This will restore stock levels.', [
       { text: 'Cancel' },
       {
         text: 'Void',
         style: 'destructive',
         onPress: async () => {
+          if (voidingRef.current) {
+            return;
+          }
+
+          voidingRef.current = true;
+
           try {
             const { data, error } = await supabase.rpc('void_sale_atomic', {
               p_sale_id: saleId,
@@ -180,20 +223,22 @@ export default function SalesHistoryScreen() {
             Alert.alert('Voided', 'Sale has been voided and stock restored.');
           } catch (error) {
             Alert.alert('Error', error.message);
+          } finally {
+            voidingRef.current = false;
           }
         },
       },
     ]);
   };
 
-  const searchTerm = cleanText(search || '').toLowerCase();
-  const filtered = sales.filter((sale) =>
+  const searchTerm = cleanText(deferredSearch || '').toLowerCase();
+  const filteredSales = searchTerm ? sales.filter((sale) =>
     cleanText(sale.reference_number || '').toLowerCase().includes(searchTerm) ||
     cleanText(sale.customer_name || '').toLowerCase().includes(searchTerm) ||
     cleanText(sale.sellerName || '').toLowerCase().includes(searchTerm)
-  );
+  ) : sales;
 
-  const totalRevenue = filtered.reduce(
+  const totalRevenue = filteredSales.reduce(
     (sum, sale) => sum + (sale.status === 'completed' ? Number(sale.total_amount || 0) : 0),
     0
   );
@@ -234,9 +279,14 @@ export default function SalesHistoryScreen() {
         <ActivityIndicator size="large" color={COLORS.secondary} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
-          data={filtered}
+          data={filteredSales}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={8}
+          removeClippedSubviews
+          keyboardShouldPersistTaps="handled"
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.saleCard} onPress={() => viewSale(item)}>
               <View style={styles.saleCardLeft}>

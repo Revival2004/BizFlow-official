@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, TextInput,
   Modal, Alert, ActivityIndicator, ScrollView, Animated,
@@ -79,6 +79,8 @@ export default function StockScreen() {
   const [editingCategory, setEditingCategory] = useState(null);
   const [categorySaving, setCategorySaving] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const deferredSearch = useDeferredValue(search);
+  const deferredCategory = useDeferredValue(catFilter);
 
   useEffect(() => {
     fetchAll();
@@ -138,8 +140,10 @@ export default function StockScreen() {
       const cleanedProducts = cleanObject(productsRes.data || []);
       const cleanedCategories = cleanObject(categoriesRes.data || []);
 
-      setProducts(cleanedProducts);
-      setCategories(cleanedCategories);
+      startTransition(() => {
+        setProducts(cleanedProducts);
+        setCategories(cleanedCategories);
+      });
       await cacheProducts(cleanedProducts);
       await cacheStockSnapshot(profile.business_id, {
         products: cleanedProducts,
@@ -149,8 +153,10 @@ export default function StockScreen() {
       if (fetchRequestRef.current === requestId) {
         const cached = await getCachedStockSnapshot(profile?.business_id);
         if (cached) {
-          setProducts(cleanObject(cached.products || []));
-          setCategories(cleanObject(cached.categories || []));
+          startTransition(() => {
+            setProducts(cleanObject(cached.products || []));
+            setCategories(cleanObject(cached.categories || []));
+          });
         } else {
           Alert.alert('Error', error.message);
         }
@@ -194,13 +200,13 @@ export default function StockScreen() {
     onChange: fetchAll,
   });
 
-  const searchTerm = cleanText(search || '').toLowerCase();
+  const searchTerm = cleanText(deferredSearch || '').toLowerCase();
   const filtered = products.filter((product) => {
     const matchesSearch =
       cleanText(product.name || '').toLowerCase().includes(searchTerm) ||
       cleanText(product.sku || '').toLowerCase().includes(searchTerm);
 
-    const matchesCategory = catFilter === 'all' || product.category_id === catFilter;
+    const matchesCategory = deferredCategory === 'all' || product.category_id === deferredCategory;
     return matchesSearch && matchesCategory;
   });
 
@@ -479,10 +485,25 @@ export default function StockScreen() {
     ]);
   };
 
-  const totalStockValue = products.reduce((sum, product) => sum + (product.cost_price * product.quantity), 0);
-  const lowStockProducts = products.filter((product) => product.quantity > 0 && product.quantity <= product.reorder_level);
-  const lowStockCount = lowStockProducts.length;
-  const outCount = products.filter((product) => product.quantity === 0).length;
+  const stockSummary = products.reduce((summary, product) => {
+    const quantity = Number(product.quantity || 0);
+    const reorderLevel = Number(product.reorder_level || 0);
+
+    summary.totalStockValue += Number(product.cost_price || 0) * quantity;
+
+    if (quantity === 0) {
+      summary.outCount += 1;
+    } else if (quantity <= reorderLevel) {
+      summary.lowStockCount += 1;
+    }
+
+    return summary;
+  }, {
+    totalStockValue: 0,
+    lowStockCount: 0,
+    outCount: 0,
+  });
+  const { totalStockValue, lowStockCount, outCount } = stockSummary;
   const healthyCount = Math.max(products.length - lowStockCount - outCount, 0);
   const stockHealth = products.length ? Math.round((healthyCount / products.length) * 100) : 100;
   const categoryOptions = [{ id: 'all', name: 'All Items' }, ...categories.map((category) => ({ id: category.id, name: category.name }))];
@@ -510,6 +531,10 @@ export default function StockScreen() {
         onRefresh={refreshAll}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        initialNumToRender={10}
+        maxToRenderPerBatch={12}
+        windowSize={8}
+        removeClippedSubviews
         contentContainerStyle={{ padding: 12, paddingBottom: 20 + insets.bottom }}
         ListHeaderComponent={(
           <>
@@ -552,7 +577,7 @@ export default function StockScreen() {
                   style={{ flex: 1, marginLeft: 10, fontSize: 14, color: colors.text }}
                   placeholder="Search products or SKU"
                   value={search}
-                  onChangeText={setSearch}
+                  onChangeText={(value) => setSearch(value)}
                   placeholderTextColor={colors.textLight}
                 />
               </View>
@@ -631,7 +656,7 @@ export default function StockScreen() {
                   </View>
 
                   <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4 }}>
-                    {item.sku ? `SKU ${cleanText(item.sku || '')} · ` : ''}{cleanText(item.categories?.name || 'Uncategorised')}
+                    {item.sku ? `SKU ${cleanText(item.sku || '')} - ` : ''}{cleanText(item.categories?.name || 'Uncategorised')}
                   </Text>
                 </View>
               </View>

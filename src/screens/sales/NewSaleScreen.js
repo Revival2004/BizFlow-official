@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   TextInput, Alert, Modal, ActivityIndicator, ScrollView,
@@ -75,6 +75,7 @@ export default function NewSaleScreen({ navigation }) {
   const processingRef = useRef(false);
   const fetchRequestRef = useRef(0);
   const mpesaPollInFlightRef = useRef(false);
+  const pendingMpesaRef = useRef(null);
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
@@ -90,10 +91,15 @@ export default function NewSaleScreen({ navigation }) {
   const [mpesaCheckoutLoading, setMpesaCheckoutLoading] = useState(false);
   const [mpesaCheckout, setMpesaCheckout] = useState(null);
   const [pendingMpesa, setPendingMpesa] = useState(null);
+  const deferredSearch = useDeferredValue(search);
 
   const canCreateSale = hasPermission('create_sale');
   const mpesaEnabled = Boolean(mpesaCheckout?.configured && mpesaCheckout?.enabled);
   const cartLocked = processing || Boolean(pendingMpesa);
+
+  useEffect(() => {
+    pendingMpesaRef.current = pendingMpesa;
+  }, [pendingMpesa]);
 
   useEffect(() => {
     if (!profile?.business_id || !profile?.id) {
@@ -182,7 +188,9 @@ export default function NewSaleScreen({ navigation }) {
 
   const fetchMpesaCheckoutStatus = async () => {
     if (!profile?.business_id || !canCreateSale) {
-      setMpesaCheckout(null);
+      startTransition(() => {
+        setMpesaCheckout(null);
+      });
       return;
     }
 
@@ -195,9 +203,13 @@ export default function NewSaleScreen({ navigation }) {
         throw error;
       }
 
-      setMpesaCheckout(data || null);
+      startTransition(() => {
+        setMpesaCheckout(data || null);
+      });
     } catch (_error) {
-      setMpesaCheckout(null);
+      startTransition(() => {
+        setMpesaCheckout(null);
+      });
     } finally {
       setMpesaCheckoutLoading(false);
     }
@@ -213,7 +225,9 @@ export default function NewSaleScreen({ navigation }) {
         const cached = await getCachedProducts();
         if (cached) {
           if (fetchRequestRef.current === requestId) {
-            setProducts(cleanObject(cached));
+            startTransition(() => {
+              setProducts(cleanObject(cached));
+            });
           }
           return;
         }
@@ -232,13 +246,17 @@ export default function NewSaleScreen({ navigation }) {
 
       const cleanedProducts = cleanObject(data || []);
       if (fetchRequestRef.current === requestId) {
-        setProducts(cleanedProducts);
+        startTransition(() => {
+          setProducts(cleanedProducts);
+        });
       }
       await cacheProducts(cleanedProducts);
     } catch {
       const cached = await getCachedProducts();
       if (cached && fetchRequestRef.current === requestId) {
-        setProducts(cleanObject(cached));
+        startTransition(() => {
+          setProducts(cleanObject(cached));
+        });
       }
     } finally {
       if (fetchRequestRef.current === requestId) {
@@ -270,7 +288,7 @@ export default function NewSaleScreen({ navigation }) {
     },
   });
 
-  const searchTerm = cleanText(search || '').toLowerCase();
+  const searchTerm = cleanText(deferredSearch || '').toLowerCase();
   const filtered = products.filter((product) =>
     cleanText(product.name || '').toLowerCase().includes(searchTerm) ||
     cleanText(product.sku || '').toLowerCase().includes(searchTerm),
@@ -390,7 +408,7 @@ export default function NewSaleScreen({ navigation }) {
       ));
 
       if (data.status === 'completed') {
-        const completedPayment = pendingMpesa;
+        const completedPayment = pendingMpesaRef.current;
         setPendingMpesa(null);
         await fetchProducts(false);
         resetSaleDraft();
@@ -545,13 +563,16 @@ export default function NewSaleScreen({ navigation }) {
       }
 
       if (!netState.isConnected) {
+        const cartById = new Map(cart.map((item) => [item.id, item]));
         const nextProducts = products.map((product) => {
-          const cartItem = cart.find((entry) => entry.id === product.id);
+          const cartItem = cartById.get(product.id);
           return cartItem ? { ...product, quantity: product.quantity - cartItem.qty } : product;
         });
 
         await saveOfflineSale(salePayload, itemsPayload);
-        setProducts(nextProducts);
+        startTransition(() => {
+          setProducts(nextProducts);
+        });
         await cacheProducts(nextProducts);
 
         setPaymentModal(false);
@@ -641,6 +662,12 @@ export default function NewSaleScreen({ navigation }) {
           data={filtered}
           keyExtractor={(item) => item.id}
           numColumns={2}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={8}
+          removeClippedSubviews
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
           columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
           renderItem={({ item }) => {
             const disabled = cartLocked || item.quantity === 0;

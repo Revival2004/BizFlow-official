@@ -456,7 +456,7 @@ create or replace function public.get_business_payment_settings_summary()
 returns json
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_settings public.business_payment_settings%rowtype;
@@ -691,8 +691,8 @@ begin
 
   loop
     v_token := 'BFLW-' ||
-      upper(substr(replace(uuid_generate_v4()::text, '-', ''), 1, 6)) || '-' ||
-      upper(substr(replace(uuid_generate_v4()::text, '-', ''), 7, 6));
+      upper(substr(replace(extensions.uuid_generate_v4()::text, '-', ''), 1, 6)) || '-' ||
+      upper(substr(replace(extensions.uuid_generate_v4()::text, '-', ''), 7, 6));
     exit when not exists (
       select 1 from public.client_access_tokens where token = v_token
     );

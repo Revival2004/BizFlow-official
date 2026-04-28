@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { startTransition, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
   Modal, Alert, ActivityIndicator, ScrollView, Share,
@@ -20,6 +20,9 @@ const AVAILABLE_ROLES = [
 
 export default function StaffScreen() {
   const { profile, hasPermission } = useAuth();
+  const fetchRequestRef = useRef(0);
+  const inviteActionRef = useRef(false);
+  const memberActionRef = useRef(false);
   const [staff, setStaff] = useState([]);
   const [invites, setInvites] = useState([]);
   const [businessName, setBusinessName] = useState('Your Business');
@@ -48,6 +51,9 @@ export default function StaffScreen() {
       return;
     }
 
+    const requestId = Date.now();
+    fetchRequestRef.current = requestId;
+
     try {
       const [staffRes, rolesRes, invitesRes, businessRes] = await Promise.all([
         supabase
@@ -70,14 +76,24 @@ export default function StaffScreen() {
       if (invitesRes.error) throw invitesRes.error;
       if (businessRes.error) throw businessRes.error;
 
-      setStaff(staffRes.data || []);
-      setRoles(rolesRes.data || []);
-      setInvites(invitesRes.data || []);
-      setBusinessName(businessRes.data?.display_name || businessRes.data?.name || 'Your Business');
+      if (fetchRequestRef.current !== requestId) {
+        return;
+      }
+
+      startTransition(() => {
+        setStaff(staffRes.data || []);
+        setRoles(rolesRes.data || []);
+        setInvites(invitesRes.data || []);
+        setBusinessName(businessRes.data?.display_name || businessRes.data?.name || 'Your Business');
+      });
     } catch (error) {
-      Alert.alert('Error', error.message);
+      if (fetchRequestRef.current === requestId) {
+        Alert.alert('Error', error.message);
+      }
     } finally {
-      setLoading(false);
+      if (fetchRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
   };
 
@@ -165,6 +181,10 @@ export default function StaffScreen() {
   };
 
   const sendInvite = async () => {
+    if (sending || inviteActionRef.current) {
+      return;
+    }
+
     const normalizedEmail = inviteEmail.trim().toLowerCase();
     if (!normalizedEmail || !normalizedEmail.includes('@')) {
       Alert.alert('Error', 'Enter a valid email address');
@@ -183,6 +203,7 @@ export default function StaffScreen() {
       return;
     }
 
+    inviteActionRef.current = true;
     setSending(true);
 
     try {
@@ -251,6 +272,7 @@ export default function StaffScreen() {
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
+      inviteActionRef.current = false;
       setSending(false);
     }
   };
@@ -262,6 +284,12 @@ export default function StaffScreen() {
         text: 'Revoke',
         style: 'destructive',
         onPress: async () => {
+          if (memberActionRef.current) {
+            return;
+          }
+
+          memberActionRef.current = true;
+
           try {
             const { error } = await supabase
               .from('invitations')
@@ -275,6 +303,8 @@ export default function StaffScreen() {
             await fetchAll();
           } catch (err) {
             Alert.alert('Error', err.message);
+          } finally {
+            memberActionRef.current = false;
           }
         },
       },
@@ -282,7 +312,7 @@ export default function StaffScreen() {
   };
 
   const updateStaffRole = async () => {
-    if (!editStaff) {
+    if (!editStaff || memberActionRef.current) {
       return;
     }
 
@@ -290,6 +320,8 @@ export default function StaffScreen() {
     if (!role) {
       return;
     }
+
+    memberActionRef.current = true;
 
     try {
       const { error } = await supabase
@@ -305,6 +337,8 @@ export default function StaffScreen() {
       await fetchAll();
     } catch (err) {
       Alert.alert('Error', err.message);
+    } finally {
+      memberActionRef.current = false;
     }
   };
 
@@ -315,6 +349,12 @@ export default function StaffScreen() {
         text: 'Deactivate',
         style: 'destructive',
         onPress: async () => {
+          if (memberActionRef.current) {
+            return;
+          }
+
+          memberActionRef.current = true;
+
           try {
             const { error } = await supabase
               .from('profiles')
@@ -328,6 +368,8 @@ export default function StaffScreen() {
             await fetchAll();
           } catch (err) {
             Alert.alert('Error', err.message);
+          } finally {
+            memberActionRef.current = false;
           }
         },
       },
@@ -336,6 +378,8 @@ export default function StaffScreen() {
 
   const roleColor = (roleName) => AVAILABLE_ROLES.find((role) => role.key === roleName)?.color || COLORS.textLight;
   const roleIcon = (roleName) => AVAILABLE_ROLES.find((role) => role.key === roleName)?.icon || 'person';
+  const activeStaffCount = staff.filter((member) => member.status === 'active').length;
+  const pendingInviteCount = invites.filter((invite) => invite.status === 'pending').length;
 
   const getInviteStatus = (invite) => {
     if (invite.status === 'pending') {
@@ -361,11 +405,11 @@ export default function StaffScreen() {
       <View style={styles.tabRow}>
         <TouchableOpacity style={[styles.tab, tab === 'staff' && styles.tabActive]} onPress={() => setTab('staff')}>
           <Ionicons name="people" size={16} color={tab === 'staff' ? COLORS.secondary : COLORS.textLight} />
-          <Text style={[styles.tabText, tab === 'staff' && styles.tabTextActive]}>Staff ({staff.filter((member) => member.status === 'active').length})</Text>
+          <Text style={[styles.tabText, tab === 'staff' && styles.tabTextActive]}>Staff ({activeStaffCount})</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.tab, tab === 'invites' && styles.tabActive]} onPress={() => setTab('invites')}>
           <Ionicons name="mail" size={16} color={tab === 'invites' ? COLORS.secondary : COLORS.textLight} />
-          <Text style={[styles.tabText, tab === 'invites' && styles.tabTextActive]}>Invites ({invites.filter((invite) => invite.status === 'pending').length})</Text>
+          <Text style={[styles.tabText, tab === 'invites' && styles.tabTextActive]}>Invites ({pendingInviteCount})</Text>
         </TouchableOpacity>
         {hasPermission('invite_staff') && (
           <TouchableOpacity style={styles.inviteBtn} onPress={() => setInviteModal(true)}>

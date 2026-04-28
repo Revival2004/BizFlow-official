@@ -1,5 +1,7 @@
 import { supabase } from './supabase';
 
+const profileNameCache = new Map();
+
 export const humanizeLabel = (value = '') =>
   String(value)
     .replace(/_/g, ' ')
@@ -11,17 +13,25 @@ export const fetchProfileNameMap = async (ids = []) => {
     return {};
   }
 
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('id, full_name')
-    .in('id', uniqueIds);
+  const missingIds = uniqueIds.filter((id) => !profileNameCache.has(id));
 
-  if (error) {
-    throw error;
+  if (missingIds.length > 0) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', missingIds);
+
+    if (error) {
+      throw error;
+    }
+
+    (data || []).forEach((profile) => {
+      profileNameCache.set(profile.id, profile.full_name || 'Staff');
+    });
   }
 
-  return (data || []).reduce((acc, profile) => {
-    acc[profile.id] = profile.full_name;
+  return uniqueIds.reduce((acc, id) => {
+    acc[id] = profileNameCache.get(id) || 'Staff';
     return acc;
   }, {});
 };
