@@ -3,6 +3,7 @@ import { isSupabaseConfigured, supabase } from '../utils/supabase';
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh';
 import { cacheProfile, clearCachedProfile, getCachedProfile } from '../utils/offline';
 import { getBusinessBillingState, getPlanEntitlements } from '../utils/billing';
+import { ROLE_PERMISSIONS } from '../utils/constants';
 
 const AuthContext = createContext({});
 
@@ -197,7 +198,12 @@ export const AuthProvider = ({ children }) => {
   const hasPermission = (permission) => {
     if (!profile) return false;
     const perms = profile.roles?.permissions || {};
-    return perms[permission] === true;
+    if (perms[permission] === true) {
+      return true;
+    }
+
+    const roleName = String(profile.roles?.name || '').trim().toLowerCase();
+    return ROLE_PERMISSIONS[roleName]?.[permission] === true;
   };
 
   const isAdmin = () => profile?.roles?.name === 'admin';

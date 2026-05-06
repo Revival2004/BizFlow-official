@@ -51,6 +51,8 @@ const emptyForm = {
   description: '',
 };
 
+const normalizeProductCode = (value) => cleanText(value || '').toLowerCase().trim();
+
 export default function StockScreen() {
   const { profile, hasPermission } = useAuth();
   const { colors } = useTheme();
@@ -230,6 +232,25 @@ export default function StockScreen() {
 
     if (!form.name.trim() || !form.selling_price || !form.cost_price) {
       Alert.alert('Required', 'Name, cost and selling price are required.');
+      return;
+    }
+
+    const normalizedSku = normalizeProductCode(form.sku);
+    const normalizedBarcode = normalizeProductCode(form.barcode);
+    const duplicateSku = normalizedSku
+      ? products.find((product) => product.id !== editProduct?.id && normalizeProductCode(product.sku) === normalizedSku)
+      : null;
+    const duplicateBarcode = normalizedBarcode
+      ? products.find((product) => product.id !== editProduct?.id && normalizeProductCode(product.barcode) === normalizedBarcode)
+      : null;
+
+    if (duplicateSku) {
+      Alert.alert('SKU Already Used', `This SKU already belongs to ${cleanText(duplicateSku.name || 'another product')}. Use a unique SKU for each item.`);
+      return;
+    }
+
+    if (duplicateBarcode) {
+      Alert.alert('Barcode Already Used', `This barcode already belongs to ${cleanText(duplicateBarcode.name || 'another product')}. Use a unique barcode for each item.`);
       return;
     }
 

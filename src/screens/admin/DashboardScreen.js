@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useDeferredValue, useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   RefreshControl, ActivityIndicator, Modal, TextInput, Alert,
@@ -14,6 +14,7 @@ import { fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
 import { cacheDashboardSnapshot, getCachedDashboardSnapshot, syncOfflineData } from '../../utils/offline';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
+import { cleanText } from '../../utils/textEncoding';
 
 export default function DashboardScreen({ navigation }) {
   const { profile, hasPermission } = useAuth();
@@ -21,6 +22,9 @@ export default function DashboardScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const [stats, setStats] = useState(null);
   const [recentSales, setRecentSales] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [fastMovers, setFastMovers] = useState([]);
+  const [stockLookup, setStockLookup] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [targetModal, setTargetModal] = useState(false);
@@ -30,6 +34,7 @@ export default function DashboardScreen({ navigation }) {
   const [syncBanner, setSyncBanner] = useState(false);
   const [dayEnded, setDayEnded] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const deferredStockLookup = useDeferredValue(stockLookup);
   const openSecondaryScreen = (routeName) => {
     const parentNavigation = navigation.getParent?.();
     if (parentNavigation?.navigate) {
@@ -106,8 +111,10 @@ export default function DashboardScreen({ navigation }) {
 
       const monthStart = new Date(today);
       monthStart.setDate(1);
+      const moversStart = new Date(today);
+      moversStart.setDate(moversStart.getDate() - 29);
 
-      const [todayRes, monthRes, recentRes] = await Promise.all([
+      const [todayRes, monthRes, recentRes, productsRes, moverItemsRes] = await Promise.all([
         supabase
           .from('sales')
           .select('total_amount, profit, status')
@@ -125,10 +132,27 @@ export default function DashboardScreen({ navigation }) {
           .eq('business_id', profile.business_id)
           .order('created_at', { ascending: false })
           .limit(5),
+        supabase
+          .from('products')
+          .select('id, name, sku, barcode, quantity, reorder_level, unit, selling_price')
+          .eq('business_id', profile.business_id)
+          .eq('is_active', true)
+          .order('name'),
+        supabase
+          .from('sale_items')
+          .select('product_id, product_name, quantity, total_price, profit, sale_id, sales!inner(created_at, status, business_id)')
+          .eq('sales.business_id', profile.business_id)
+          .eq('sales.status', 'completed')
+          .gte('sales.created_at', moversStart.toISOString()),
       ]);
+
+      if (productsRes.error) throw productsRes.error;
+      if (moverItemsRes.error) throw moverItemsRes.error;
 
       const completed = (todayRes.data || []).filter((sale) => sale.status === 'completed');
       const recentSalesWithNames = await attachSellerNames(recentRes.data || []);
+      const inventory = productsRes.data || [];
+      const moverInsights = buildFastMoverInsights(moverItemsRes.data || [], inventory);
 
       setStats({
         todayRevenue: completed.reduce((sum, sale) => sum + (sale.total_amount || 0), 0),
@@ -137,6 +161,8 @@ export default function DashboardScreen({ navigation }) {
         monthRevenue: (monthRes.data || []).reduce((sum, sale) => sum + (sale.total_amount || 0), 0),
       });
       setRecentSales(recentSalesWithNames);
+      setProducts(inventory);
+      setFastMovers(moverInsights);
       await cacheDashboardSnapshot(profile.business_id, {
         stats: {
           todayRevenue: completed.reduce((sum, sale) => sum + (sale.total_amount || 0), 0),
@@ -145,6 +171,8 @@ export default function DashboardScreen({ navigation }) {
           monthRevenue: (monthRes.data || []).reduce((sum, sale) => sum + (sale.total_amount || 0), 0),
         },
         recentSales: recentSalesWithNames,
+        products: inventory,
+        fastMovers: moverInsights,
       });
     } catch (error) {
       console.error(error);
@@ -152,6 +180,8 @@ export default function DashboardScreen({ navigation }) {
       if (cached) {
         setStats(cached.stats || null);
         setRecentSales(cached.recentSales || []);
+        setProducts(cached.products || []);
+        setFastMovers(cached.fastMovers || []);
       }
     } finally {
       setLoading(false);
@@ -173,6 +203,12 @@ export default function DashboardScreen({ navigation }) {
         event: '*',
         schema: 'public',
         table: 'profiles',
+        filter: `business_id=eq.${profile?.business_id}`,
+      },
+      {
+        event: '*',
+        schema: 'public',
+        table: 'products',
         filter: `business_id=eq.${profile?.business_id}`,
       },
     ],
@@ -215,6 +251,16 @@ export default function DashboardScreen({ navigation }) {
   const displayRevenue = dayEnded ? 0 : (stats?.todayRevenue || 0);
   const displayProfit = dayEnded ? 0 : (stats?.todayProfit || 0);
   const displayOrders = dayEnded ? 0 : (stats?.todayOrders || 0);
+  const normalizedLookup = normalizeInventorySearch(deferredStockLookup);
+  const lookupResults = normalizedLookup.length < 2
+    ? []
+    : products
+      .filter((product) => (
+        normalizeInventorySearch(product.name).includes(normalizedLookup) ||
+        normalizeInventorySearch(product.sku).includes(normalizedLookup) ||
+        normalizeInventorySearch(product.barcode).includes(normalizedLookup)
+      ))
+      .slice(0, 6);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -334,6 +380,79 @@ export default function DashboardScreen({ navigation }) {
           )}
         </View>
 
+        {hasPermission('view_stock') && (
+          <>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 10 }}>Inventory Check</Text>
+            <View style={{ backgroundColor: colors.card, borderRadius: 18, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.bg, borderRadius: 14, paddingHorizontal: 14, height: 46, borderWidth: 1, borderColor: colors.border }}>
+                <Ionicons name="search" size={17} color={colors.textLight} />
+                <TextInput
+                  style={{ flex: 1, marginLeft: 10, fontSize: 14, color: colors.text }}
+                  placeholder="Search item, SKU or barcode"
+                  value={stockLookup}
+                  onChangeText={setStockLookup}
+                  placeholderTextColor={colors.textLight}
+                />
+                <TouchableOpacity onPress={() => navigation.navigate('Stock')}>
+                  <Text style={{ color: colors.secondary, fontWeight: '700', fontSize: 12 }}>Open Stock</Text>
+                </TouchableOpacity>
+              </View>
+
+              {normalizedLookup.length < 2 ? (
+                <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 12 }}>Type at least 2 characters to confirm whether an item already exists in stock.</Text>
+              ) : lookupResults.length === 0 ? (
+                <View style={{ marginTop: 12, backgroundColor: colors.bg, borderRadius: 14, padding: 14 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>No stock match found</Text>
+                  <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4 }}>Try another name, SKU or barcode.</Text>
+                </View>
+              ) : (
+                <View style={{ marginTop: 12, gap: 8 }}>
+                  {lookupResults.map((item) => {
+                    const stockStatus = getDashboardStockStatus(item);
+                    const statusColor = stockStatus === 'Out of Stock'
+                      ? colors.danger
+                      : stockStatus === 'Low Stock'
+                        ? colors.warning
+                        : colors.success;
+
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        activeOpacity={0.8}
+                        onPress={() => navigation.navigate('Stock')}
+                        style={{ backgroundColor: colors.bg, borderRadius: 14, padding: 14, borderWidth: 1, borderColor: colors.border }}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 14, fontWeight: '800', color: colors.text }}>{cleanText(item.name || '')}</Text>
+                            <Text style={{ fontSize: 11, color: colors.textLight, marginTop: 4 }}>
+                              {[item.sku ? `SKU ${cleanText(item.sku || '')}` : null, item.barcode ? `Code ${cleanText(item.barcode || '')}` : null].filter(Boolean).join(' • ') || 'No code saved'}
+                            </Text>
+                          </View>
+                          <View style={{ backgroundColor: statusColor + '18', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '800', color: statusColor }}>{stockStatus}</Text>
+                          </View>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                          <View style={{ flex: 1, backgroundColor: colors.card, borderRadius: 12, padding: 10 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textLight, marginBottom: 4 }}>Stock Left</Text>
+                            <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>{Number(item.quantity || 0)} {cleanText(item.unit || 'pcs')}</Text>
+                          </View>
+                          <View style={{ flex: 1, backgroundColor: colors.card, borderRadius: 12, padding: 10 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textLight, marginBottom: 4 }}>Selling Price</Text>
+                            <Text style={{ fontSize: 15, fontWeight: '800', color: colors.secondary }}>{fmt(item.selling_price || 0)}</Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          </>
+        )}
+
         <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 10 }}>Quick Actions</Text>
         <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
           {hasPermission('create_sale') && (
@@ -366,6 +485,54 @@ export default function DashboardScreen({ navigation }) {
           <Ionicons name="moon" size={18} color={colors.danger} />
           <Text style={{ color: colors.danger, fontWeight: '700', fontSize: 14 }}>End Today's Sales Session</Text>
         </TouchableOpacity>
+
+        <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 10 }}>Fast Movers</Text>
+        {fastMovers.length === 0 ? (
+          <View style={{ backgroundColor: colors.card, borderRadius: 14, padding: 24, alignItems: 'center', marginBottom: 16 }}>
+            <Ionicons name="flash-outline" size={32} color={colors.textLight} />
+            <Text style={{ color: colors.textLight, marginTop: 8, textAlign: 'center' }}>Fast-moving items will appear here after BizFlow sees enough sales activity.</Text>
+          </View>
+        ) : (
+          <View style={{ marginBottom: 16 }}>
+            {fastMovers.map((item) => {
+              const statusColor = item.status === 'Restock Soon'
+                ? colors.warning
+                : item.status === 'Low Stock' || item.status === 'Out of Stock'
+                  ? colors.danger
+                  : colors.success;
+
+              return (
+                <View key={item.id} style={{ backgroundColor: colors.card, borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                        <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: colors.secondary + '18', alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: colors.secondary }}>#{item.rank}</Text>
+                        </View>
+                        <Text style={{ flex: 1, fontSize: 14, fontWeight: '800', color: colors.text }}>{cleanText(item.name || '')}</Text>
+                      </View>
+                      <Text style={{ fontSize: 11, color: colors.textLight }}>{item.qty} sold in the last 30 days across {item.salesCount} sale{item.salesCount === 1 ? '' : 's'}</Text>
+                    </View>
+                    <View style={{ backgroundColor: statusColor + '18', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: statusColor }}>{item.status}</Text>
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                    <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 12, padding: 10 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textLight, marginBottom: 4 }}>Revenue</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: colors.secondary }}>{fmt(item.revenue)}</Text>
+                    </View>
+                    <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 12, padding: 10 }}>
+                      <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textLight, marginBottom: 4 }}>Stock Left</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: statusColor }}>{item.currentStock} {item.unit}</Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
 
         <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 10 }}>Recent Sales</Text>
         {recentSales.length === 0 ? (
@@ -441,4 +608,71 @@ function getGreeting() {
   if (hour < 12) return 'morning';
   if (hour < 17) return 'afternoon';
   return 'evening';
+}
+
+function normalizeInventorySearch(value) {
+  return cleanText(value || '').toLowerCase().trim();
+}
+
+function getDashboardStockStatus(product) {
+  const quantity = Number(product?.quantity || 0);
+  const reorderLevel = Number(product?.reorder_level || 0);
+
+  if (quantity <= 0) return 'Out of Stock';
+  if (quantity <= reorderLevel) return 'Low Stock';
+  return 'In Stock';
+}
+
+function buildFastMoverInsights(items = [], products = []) {
+  const productLookup = new Map(
+    products.map((product) => [product.id, {
+      id: product.id,
+      name: cleanText(product.name || ''),
+      currentStock: Number(product.quantity || 0),
+      reorderLevel: Number(product.reorder_level || 0),
+      unit: cleanText(product.unit || 'pcs'),
+    }]),
+  );
+  const grouped = {};
+
+  items.forEach((item) => {
+    const key = item.product_id || cleanText(item.product_name || '');
+    const productMeta = item.product_id ? productLookup.get(item.product_id) : null;
+
+    if (!grouped[key]) {
+      grouped[key] = {
+        id: item.product_id || key,
+        name: cleanText(item.product_name || productMeta?.name || 'Unnamed item'),
+        qty: 0,
+        revenue: 0,
+        salesCountSet: new Set(),
+        currentStock: Number(productMeta?.currentStock || 0),
+        reorderLevel: Number(productMeta?.reorderLevel || 0),
+        unit: productMeta?.unit || 'pcs',
+      };
+    }
+
+    grouped[key].qty += Number(item.quantity || 0);
+    grouped[key].revenue += Number(item.total_price || 0);
+    if (item.sale_id) {
+      grouped[key].salesCountSet.add(item.sale_id);
+    }
+  });
+
+  return Object.values(grouped)
+    .map(({ salesCountSet, ...entry }) => ({
+      ...entry,
+      salesCount: salesCountSet.size,
+    }))
+    .sort((a, b) => b.qty - a.qty || b.revenue - a.revenue)
+    .slice(0, 5)
+    .map((entry, index) => ({
+      ...entry,
+      rank: index + 1,
+      status: entry.currentStock <= 0
+        ? 'Out of Stock'
+        : entry.currentStock <= Math.max(entry.reorderLevel, Math.ceil(entry.qty / 4))
+          ? 'Restock Soon'
+          : 'Fast Moving',
+    }));
 }

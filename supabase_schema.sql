@@ -430,6 +430,12 @@ end $$;
 -- 4. INDEXES
 -- ============================================================
 create index if not exists idx_products_business    on public.products(business_id);
+create unique index if not exists products_business_sku_active_uq
+on public.products (business_id, lower(sku))
+where sku is not null and btrim(sku) <> '' and is_active = true;
+create unique index if not exists products_business_barcode_active_uq
+on public.products (business_id, lower(barcode))
+where barcode is not null and btrim(barcode) <> '' and is_active = true;
 create index if not exists idx_sales_business       on public.sales(business_id);
 create index if not exists idx_sales_created        on public.sales(created_at desc);
 create index if not exists idx_sales_status         on public.sales(business_id, status);

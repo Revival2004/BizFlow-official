@@ -535,4 +535,12 @@ begin
 end;
 $$;
 
+create unique index if not exists products_business_sku_active_uq
+on public.products (business_id, lower(sku))
+where sku is not null and btrim(sku) <> '' and is_active = true;
+
+create unique index if not exists products_business_barcode_active_uq
+on public.products (business_id, lower(barcode))
+where barcode is not null and btrim(barcode) <> '' and is_active = true;
+
 grant execute on function public.process_sale(uuid, text, uuid, text, text, numeric, numeric, numeric, text, numeric, numeric, text, jsonb, text, text, text) to authenticated;

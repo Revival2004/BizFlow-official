@@ -2,7 +2,7 @@ import React, { startTransition, useDeferredValue, useEffect, useRef, useState }
 import {
   View, Text, FlatList, TouchableOpacity,
   TextInput, Alert, Modal, ActivityIndicator, ScrollView,
-  Animated,
+  Animated, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -80,6 +80,7 @@ export default function NewSaleScreen({ navigation }) {
   const fetchRequestRef = useRef(0);
   const mpesaPollInFlightRef = useRef(false);
   const pendingMpesaRef = useRef(null);
+  const searchAutoAddKeyRef = useRef('');
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState('');
@@ -108,10 +109,32 @@ export default function NewSaleScreen({ navigation }) {
   const canUseBarcodeScanner = Boolean(planEntitlements?.canUseBarcodeScanner);
   const usesManualDigitalEvidence = paymentMethod === 'card' || paymentMethod === 'transfer';
   const parsedPaymentMessage = parsePaymentMessage(paymentMessage);
+  const normalizeProductCode = (value) => cleanText(value || '').toLowerCase().trim();
+  const isLikelyCodeInput = (value) => {
+    const normalized = normalizeProductCode(value);
+    return normalized.length >= 4 && /^[a-z0-9._-]+$/i.test(normalized);
+  };
+  const findProductByCode = (value) => {
+    const normalized = normalizeProductCode(value);
+    if (!normalized) {
+      return null;
+    }
+
+    return products.find((entry) => (
+      normalizeProductCode(entry.barcode) === normalized ||
+      normalizeProductCode(entry.sku) === normalized
+    )) || null;
+  };
 
   useEffect(() => {
     pendingMpesaRef.current = pendingMpesa;
   }, [pendingMpesa]);
+
+  useEffect(() => {
+    if (!cleanText(search || '').trim()) {
+      searchAutoAddKeyRef.current = '';
+    }
+  }, [search]);
 
   useEffect(() => {
     if (!profile?.business_id || !profile?.id) {
@@ -249,6 +272,23 @@ export default function NewSaleScreen({ navigation }) {
     setBarcodeModal(true);
   };
 
+  const addMatchedCodeToCart = (value, { alertOnMiss = false } = {}) => {
+    const product = findProductByCode(value);
+
+    if (product) {
+      addToCart(product);
+      setSearch('');
+      searchAutoAddKeyRef.current = '';
+      return true;
+    }
+
+    if (alertOnMiss) {
+      Alert.alert('No Match', 'No product matched that barcode yet. You can still search or save the barcode on the product record.');
+    }
+
+    return false;
+  };
+
   const handleBarcodeScanned = ({ data }) => {
     if (barcodeLocked || cartLocked) {
       return;
@@ -256,20 +296,12 @@ export default function NewSaleScreen({ navigation }) {
 
     setBarcodeLocked(true);
     const scannedCode = cleanText(data || '');
-    const normalizedCode = scannedCode.toLowerCase();
-    const product = products.find((entry) => (
-      cleanText(entry.barcode || '').toLowerCase() === normalizedCode ||
-      cleanText(entry.sku || '').toLowerCase() === normalizedCode
-    ));
-
     closeBarcodeScanner();
-    setSearch(scannedCode);
-
-    if (product) {
-      addToCart(product);
+    if (addMatchedCodeToCart(scannedCode, { alertOnMiss: false })) {
       return;
     }
 
+    setSearch(scannedCode);
     Alert.alert('No Match', 'No product matched that barcode yet. You can still search or save the barcode on the product record.');
   };
 
@@ -381,6 +413,30 @@ export default function NewSaleScreen({ navigation }) {
     cleanText(product.sku || '').toLowerCase().includes(searchTerm) ||
     cleanText(product.barcode || '').toLowerCase().includes(searchTerm),
   );
+
+  useEffect(() => {
+    if (cartLocked || Platform.OS !== 'web' || !isLikelyCodeInput(search)) {
+      return undefined;
+    }
+
+    const match = findProductByCode(search);
+    if (!match) {
+      return undefined;
+    }
+
+    const normalized = normalizeProductCode(search);
+    const autoAddKey = `${match.id}:${normalized}`;
+    if (searchAutoAddKeyRef.current === autoAddKey) {
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => {
+      searchAutoAddKeyRef.current = autoAddKey;
+      addMatchedCodeToCart(search, { alertOnMiss: false });
+    }, 180);
+
+    return () => clearTimeout(timeout);
+  }, [cartLocked, products, search]);
 
   const addToCart = (product) => {
     if (cartLocked) {
@@ -756,13 +812,20 @@ export default function NewSaleScreen({ navigation }) {
       <View style={{ flex: 1.2, padding: 12, paddingTop: isOffline ? 36 : 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: 10, paddingHorizontal: 12, marginBottom: 10, borderWidth: 1, borderColor: colors.border, height: 42 }}>
           <Ionicons name="search" size={18} color={colors.textLight} />
-          <TextInput
-            style={{ flex: 1, marginLeft: 8, fontSize: 14, color: colors.text }}
-            placeholder="Search product, SKU or barcode..."
-            value={search}
-            onChangeText={setSearch}
-            placeholderTextColor={colors.textLight}
-          />
+            <TextInput
+              style={{ flex: 1, marginLeft: 8, fontSize: 14, color: colors.text }}
+              placeholder="Search product, SKU or barcode..."
+              value={search}
+              onChangeText={setSearch}
+              onSubmitEditing={() => {
+                if (isLikelyCodeInput(search)) {
+                  addMatchedCodeToCart(search, { alertOnMiss: false });
+                }
+              }}
+              returnKeyType="search"
+              blurOnSubmit={false}
+              placeholderTextColor={colors.textLight}
+            />
           <TouchableOpacity
             onPress={openBarcodeScanner}
             style={{ width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: canUseBarcodeScanner ? colors.secondary + '12' : colors.bg }}

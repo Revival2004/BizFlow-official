@@ -38,6 +38,7 @@
   },
   "private": true,
   "devDependencies": {
+    "@types/react": "~19.1.10",
     "supabase": "^2.95.4",
     "typescript": "~5.9.2"
   }
