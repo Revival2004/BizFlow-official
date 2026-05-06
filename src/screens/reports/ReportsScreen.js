@@ -35,29 +35,69 @@ const PERIOD_LABELS = {
   year: 'This Year',
 };
 
+const formatCsvDate = (value) => {
+  const date = new Date(value || 0);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return date.toLocaleString('en-KE', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const flattenSalesToExportRows = (sales = []) => {
+  const rows = [];
+
+  sales.forEach((sale) => {
+    const saleItems = Array.isArray(sale.sale_items) && sale.sale_items.length > 0
+      ? sale.sale_items
+      : [{
+          product_name: 'Sale Total',
+          quantity: sale.items_count || 0,
+          unit_price: sale.items_count ? Number(sale.total_amount || 0) / Number(sale.items_count || 1) : Number(sale.total_amount || 0),
+          total_price: Number(sale.total_amount || 0),
+          profit: Number(sale.profit || 0),
+        }];
+
+    saleItems.forEach((item, index) => {
+      rows.push([
+        cleanText(sale.reference_number || ''),
+        formatCsvDate(sale.created_at),
+        cleanText(sale.customer_name || 'Walk-in'),
+        cleanText(sale.customer_phone || ''),
+        cleanText(sale.payment_payer_name || ''),
+        cleanText(sale.payment_reference || ''),
+        cleanText(sale.sellerName || ''),
+        cleanText(item.product_name || ''),
+        Number(item.quantity || 0),
+        Number(item.unit_price || 0).toFixed(2),
+        Number(item.total_price || 0).toFixed(2),
+        Number(item.profit || (index === 0 ? sale.profit || 0 : 0)).toFixed(2),
+        cleanText(sale.payment_method || ''),
+        cleanText(sale.status || ''),
+      ]);
+    });
+  });
+
+  return rows;
+};
+
 const buildCsvContent = ({ sales, period, summary }) => {
+  const saleRows = flattenSalesToExportRows(sales);
   const rows = [
-    ['Reference', 'Date', 'Customer', 'Payer', 'Payment Ref', 'Staff', 'Items', 'Total (KES)', 'Cost (KES)', 'Profit (KES)', 'Payment', 'Status'],
-    ...sales.map((sale) => [
-      cleanText(sale.reference_number || ''),
-      new Date(sale.created_at).toLocaleString(),
-      cleanText(sale.customer_name || 'Walk-in'),
-      cleanText(sale.payment_payer_name || ''),
-      cleanText(sale.payment_reference || ''),
-      cleanText(sale.sellerName || ''),
-      sale.items_count ?? sale.sale_items?.length ?? 0,
-      Number(sale.total_amount || 0).toFixed(2),
-      Number(sale.cost_total || 0).toFixed(2),
-      Number(sale.profit || 0).toFixed(2),
-      cleanText(sale.payment_method || ''),
-      cleanText(sale.status || ''),
-    ]),
+    ['Sale Reference', 'Date', 'Customer Name', 'Customer Phone', 'Payer Name', 'Payment Reference', 'Staff', 'Product', 'Quantity', 'Unit Price (KES)', 'Line Total (KES)', 'Line Profit (KES)', 'Payment Method', 'Sale Status'],
+    ...saleRows,
     [],
-    ['SUMMARY'],
+    ['REPORT SUMMARY'],
     ['Period', period],
-    ['Total Sales', summary?.totalSales || 0],
-    ['Total Revenue (KES)', Number(summary?.totalRevenue || 0).toFixed(2)],
-    ['Total Profit (KES)', Number(summary?.totalProfit || 0).toFixed(2)],
+    ['Sales Count', summary?.totalSales || 0],
+    ['Revenue (KES)', Number(summary?.totalRevenue || 0).toFixed(2)],
+    ['Profit (KES)', Number(summary?.totalProfit || 0).toFixed(2)],
     ['Margin', `${Number(summary?.margin || 0).toFixed(1)}%`],
   ];
 
