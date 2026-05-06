@@ -90,6 +90,9 @@ serve(async (req) => {
     const body = await req.json();
     const requestedReference = cleanText(body?.referenceNumber || "");
     const requestedCustomerName = cleanText(body?.customerName || "");
+    const requestedPaymentPayerName = cleanText(body?.paymentPayerName || "");
+    const requestedPaymentReference = cleanText(body?.paymentReference || "");
+    const requestedPaymentMessage = cleanText(body?.paymentMessage || "");
     const requestedPhone = normalizeKenyanPhone(String(body?.customerPhone || ""));
     const requestedItems = Array.isArray(body?.items) ? body.items : [];
     const requestedTotalAmount = Number(body?.totalAmount || 0);
@@ -249,14 +252,17 @@ serve(async (req) => {
         created_by: userData.user.id,
         reference_number: requestedReference,
         provider: "mpesa",
-        customer_name: requestedCustomerName || null,
+        customer_name: requestedCustomerName || requestedPaymentPayerName || null,
         customer_phone: requestedPhone,
         amount: mpesaAmount,
         currency: "KES",
         status: "pending",
         sale_payload: {
           sold_by: userData.user.id,
-          customer_name: requestedCustomerName || null,
+          customer_name: requestedCustomerName || requestedPaymentPayerName || null,
+          payment_payer_name: requestedPaymentPayerName || null,
+          payment_reference: requestedPaymentReference || null,
+          payment_message: requestedPaymentMessage || null,
           cost_total: calculatedCostTotal,
           profit: profitTotal,
           payment_method: "mpesa",

@@ -233,15 +233,12 @@ export default function RegisterScreen({ navigation, route }) {
       <View style={styles.banner}>
         <Ionicons name="people-outline" size={20} color={COLORS.accent} />
         <Text style={styles.bannerText}>
-          Joining an existing business? Verify the invite from your business admin, then create your account.
+          Verify your invite, then create your account.
         </Text>
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Step 1: Verify Staff Invite</Text>
-        <Text style={styles.panelText}>
-          Enter the invitation token shared by the business admin.
-        </Text>
+        <Text style={styles.panelTitle}>Verify Staff Invite</Text>
         <View style={styles.inputRow}>
           <Ionicons name="mail-open-outline" size={18} color={COLORS.textLight} style={styles.inputIcon} />
           <TextInput
@@ -271,36 +268,33 @@ export default function RegisterScreen({ navigation, route }) {
       <View style={styles.banner}>
         <Ionicons name="rocket-outline" size={20} color={COLORS.secondary} />
         <Text style={styles.bannerText}>
-          Start your business account normally. Every new BizFlow business gets a 7-day free trial first, then you can upgrade later from inside the app.
+          Start a business account. The 7-day trial starts automatically.
         </Text>
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.panelTitle}>Your BizFlow Billing Path</Text>
-        <Text style={styles.panelText}>
-          You do not need any token to onboard a new business. Create the account first, then choose a paid plan later from Settings.
-        </Text>
+        <Text style={styles.panelTitle}>Plans</Text>
 
         {[
           {
             icon: 'timer-outline',
             title: 'Free Trial',
             price: '7 days free',
-            text: 'Every new business starts here automatically after signup.',
+            text: '7 staff slots, no CSV export.',
             color: COLORS.warning,
           },
           {
             icon: 'flash-outline',
             title: 'Beta Plan',
-            price: `${formatBillingAmount(700, 'USD')} per 30 days`,
-            text: 'Monthly access for growing businesses after the free trial ends.',
+            price: `${formatBillingAmount(90000, 'KES')} per 30 days`,
+            text: '7 staff slots, no CSV export.',
             color: COLORS.secondary,
           },
           {
             icon: 'diamond-outline',
             title: 'Lifetime Plan',
-            price: formatBillingAmount(10000, 'USD'),
-            text: 'One-time purchase for permanent BizFlow access.',
+            price: formatBillingAmount(1290000, 'KES'),
+            text: 'Unlimited staff, CSV export and barcode scanner.',
             color: COLORS.accent,
           },
         ].map((card) => (
@@ -332,7 +326,7 @@ export default function RegisterScreen({ navigation, route }) {
             <Ionicons name={mode === 'business' ? 'business' : 'people'} size={34} color={COLORS.white} />
           </View>
           <Text style={styles.appName}>BizFlow</Text>
-          <Text style={styles.subtitleTop}>Self-serve business signup and team invites</Text>
+          <Text style={styles.subtitleTop}>Business signup and team invites</Text>
         </View>
 
         <View style={styles.modeRow}>
@@ -348,7 +342,7 @@ export default function RegisterScreen({ navigation, route }) {
 
         <View style={styles.card}>
           <Text style={styles.title}>
-            {mode === 'business' ? 'Create Business Account' : 'Create Staff Account'}
+            {mode === 'business' ? 'Create Account' : 'Create Staff Account'}
           </Text>
 
           {mode === 'business' && (

@@ -123,6 +123,7 @@ serve(async (req) => {
     }
 
     const reference = generateReference();
+    const normalizedCurrency = cleanText(plan.currency || "KES").toUpperCase() || "KES";
     const checkoutPayload = {
       business_id: businessId,
       plan_id: plan.id,
@@ -133,7 +134,7 @@ serve(async (req) => {
       reference,
       status: "initialized",
       amount_minor: Number(plan.amount_minor || 0),
-      currency: cleanText(plan.currency || "KES") || "KES",
+      currency: normalizedCurrency,
       metadata: {
         source: "bizflow-billing",
         intent,
@@ -156,7 +157,7 @@ serve(async (req) => {
     const paystackBody: Record<string, unknown> = {
       email,
       amount: String(Number(plan.amount_minor || 0)),
-      currency: cleanText(plan.currency || "KES") || "KES",
+      currency: normalizedCurrency,
       reference,
       metadata: {
         source: "bizflow-billing",
@@ -173,6 +174,10 @@ serve(async (req) => {
         ],
       },
     };
+
+    if (normalizedCurrency === "KES") {
+      paystackBody.channels = ["mobile_money", "card"];
+    }
 
     if (callbackUrl) {
       paystackBody.callback_url = callbackUrl;

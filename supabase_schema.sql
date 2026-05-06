@@ -99,7 +99,7 @@ create table if not exists public.billing_plans (
   name             text not null,
   description      text,
   amount_minor     bigint not null,
-  currency         text not null default 'USD',
+  currency         text not null default 'KES',
   billing_days     integer not null default 30,
   paystack_plan_code text,
   features         jsonb not null default '[]'::jsonb,
@@ -123,7 +123,7 @@ create table if not exists public.billing_checkouts (
   reference        text unique not null,
   status           text not null default 'initialized' check (status in ('initialized','pending','paid','failed','expired','consumed','abandoned')),
   amount_minor     bigint not null,
-  currency         text not null default 'USD',
+  currency         text not null default 'KES',
   paystack_access_code text,
   paystack_authorization_url text,
   paystack_transaction_id bigint,
@@ -208,6 +208,9 @@ create table if not exists public.sales (
   sold_by           uuid,
   customer_name     text,
   customer_phone    text,
+  payment_payer_name text,
+  payment_reference text,
+  payment_message   text,
   total_amount      numeric(12,2) not null default 0,
   cost_total        numeric(12,2) default 0,
   profit            numeric(12,2) default 0,
@@ -300,8 +303,8 @@ create table if not exists public.notifications (
 -- 3. ALIGN EXISTING PROJECTS
 -- ============================================================
 alter table public.businesses alter column currency set default 'KES';
-alter table public.billing_plans alter column currency set default 'USD';
-alter table public.billing_checkouts alter column currency set default 'USD';
+alter table public.billing_plans alter column currency set default 'KES';
+alter table public.billing_checkouts alter column currency set default 'KES';
 alter table public.businesses add column if not exists status text default 'active';
 alter table public.businesses add column if not exists display_name text;
 alter table public.businesses add column if not exists billing_status text default 'trialing';
@@ -318,6 +321,9 @@ alter table public.billing_plans add column if not exists is_lifetime boolean no
 alter table public.profiles add column if not exists is_super_admin boolean default false;
 alter table public.invitations add column if not exists status text default 'pending';
 alter table public.sales add column if not exists status text default 'completed';
+alter table public.sales add column if not exists payment_payer_name text;
+alter table public.sales add column if not exists payment_reference text;
+alter table public.sales add column if not exists payment_message text;
 alter table public.client_access_tokens add column if not exists status text default 'active';
 
 update public.businesses
@@ -558,40 +564,40 @@ $$;
 
 insert into public.billing_plans(slug, name, description, amount_minor, currency, billing_days, features, is_trial, is_lifetime, is_active, sort_order)
 values
-  (
-    'free-trial',
-    'Free Trial',
-    'Automatic 7-day trial for every new business that signs up.',
-    0,
-    'USD',
+    (
+      'free-trial',
+      'Free Trial',
+      'Automatic 7-day trial for every new business that signs up.',
+      0,
+      'KES',
     7,
-    '["Full BizFlow access for 7 days","Sales, stock and reports","Unlimited staff invites","Upgrade later from inside the app"]'::jsonb,
+    '["7 staff onboarding slots","Desktop web access","Offline sales and reports","Upgrade later from inside the app"]'::jsonb,
     true,
     false,
     true,
     0
   ),
-  (
-    'beta',
-    'Beta',
-    'Monthly BizFlow access after the free trial ends.',
-    700,
-    'USD',
+    (
+      'beta',
+      'Beta',
+      'Monthly BizFlow access after the free trial ends.',
+      90000,
+      'KES',
     30,
-    '["1 business workspace","Unlimited staff invites","Sales, stock and reports","Offline sales sync"]'::jsonb,
+    '["7 staff onboarding slots","Desktop web access","Offline sales and reports","No CSV export"]'::jsonb,
     false,
     false,
     true,
     10
   ),
-  (
-    'lifetime',
-    'Lifetime',
-    'One-time BizFlow purchase for permanent business access.',
-    10000,
-    'USD',
+    (
+      'lifetime',
+      'Lifetime',
+      'One-time BizFlow purchase for permanent business access.',
+      1290000,
+      'KES',
     36500,
-    '["One-time payment","Permanent business access","Unlimited staff invites","Sales, stock, reports and offline sync"]'::jsonb,
+    '["Unlimited staff onboarding","CSV exports","Barcode scanner","Desktop web access","Offline sales and reports"]'::jsonb,
     false,
     true,
     true,
@@ -1143,7 +1149,14 @@ begin
     return json_build_object('success', false, 'error', 'This user already has a BizFlow profile');
   end if;
 
-  if exists (select 1 from public.businesses where lower(coalesce(owner_email, '')) = v_email) then
+  if exists (
+    select 1
+    from public.businesses b
+    left join public.profiles p on p.id = b.owner_user_id
+    left join auth.users u on u.id = b.owner_user_id
+    where lower(coalesce(b.owner_email, '')) = v_email
+      and (p.id is not null or u.id is not null)
+  ) then
     return json_build_object('success', false, 'error', 'This email already owns a BizFlow business');
   end if;
 
@@ -2035,7 +2048,10 @@ create or replace function public.process_sale(
   p_amount_tendered   numeric,
   p_change_given      numeric,
   p_notes             text,
-  p_items             jsonb
+  p_items             jsonb,
+  p_payment_reference text default null,
+  p_payment_payer_name text default null,
+  p_payment_message   text default null
 )
 returns json
 language plpgsql
@@ -2099,6 +2115,9 @@ begin
       sold_by,
       customer_name,
       customer_phone,
+      payment_payer_name,
+      payment_reference,
+      payment_message,
       total_amount,
       cost_total,
       profit,
@@ -2114,6 +2133,9 @@ begin
       p_sold_by,
       nullif(trim(coalesce(p_customer_name, '')), ''),
       nullif(trim(coalesce(p_customer_phone, '')), ''),
+      nullif(trim(coalesce(p_payment_payer_name, '')), ''),
+      nullif(trim(coalesce(p_payment_reference, '')), ''),
+      nullif(trim(coalesce(p_payment_message, '')), ''),
       coalesce(p_total_amount, 0),
       coalesce(p_cost_total, 0),
       coalesce(p_profit, 0),
@@ -2353,6 +2375,9 @@ declare
   v_product_name    text;
   v_payment_note    text;
   v_created_by      uuid;
+  v_payment_reference text;
+  v_payment_payer_name text;
+  v_payment_message text;
 begin
   select *
   into v_intent
@@ -2402,6 +2427,12 @@ begin
 
   v_created_by := coalesce((v_intent.sale_payload->>'sold_by')::uuid, v_intent.created_by);
   v_payment_note := nullif(trim(coalesce(v_intent.sale_payload->>'notes', '')), '');
+  v_payment_reference := coalesce(
+    nullif(trim(coalesce(v_intent.sale_payload->>'payment_reference', '')), ''),
+    nullif(trim(coalesce(v_intent.mpesa_receipt_number, '')), '')
+  );
+  v_payment_payer_name := nullif(trim(coalesce(v_intent.sale_payload->>'payment_payer_name', '')), '');
+  v_payment_message := nullif(trim(coalesce(v_intent.sale_payload->>'payment_message', '')), '');
 
   if nullif(trim(coalesce(v_intent.mpesa_receipt_number, '')), '') is not null then
     v_payment_note := concat_ws(' | ', v_payment_note, 'M-Pesa receipt: ' || trim(v_intent.mpesa_receipt_number));
@@ -2414,6 +2445,9 @@ begin
       sold_by,
       customer_name,
       customer_phone,
+      payment_payer_name,
+      payment_reference,
+      payment_message,
       total_amount,
       cost_total,
       profit,
@@ -2427,8 +2461,11 @@ begin
       v_intent.business_id,
       v_intent.reference_number,
       v_created_by,
-      nullif(trim(coalesce(v_intent.customer_name, v_intent.sale_payload->>'customer_name', '')), ''),
+      nullif(trim(coalesce(v_intent.customer_name, v_intent.sale_payload->>'customer_name', v_payment_payer_name, '')), ''),
       nullif(trim(coalesce(v_intent.customer_phone, '')), ''),
+      v_payment_payer_name,
+      v_payment_reference,
+      v_payment_message,
       coalesce(v_intent.amount, 0),
       coalesce((v_intent.sale_payload->>'cost_total')::numeric, 0),
       coalesce((v_intent.sale_payload->>'profit')::numeric, 0),

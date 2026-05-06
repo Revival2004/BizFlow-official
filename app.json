@@ -43,6 +43,15 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow BFlow to scan product barcodes.",
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "0eeb4763-5c7b-4732-98cc-307f7d55b1f5"

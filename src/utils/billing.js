@@ -8,6 +8,89 @@ export const BILLING_STATUSES = {
 export const PLATFORM_OWNER_EMAIL = 'revivalthuranira@gmail.com';
 export const PLATFORM_BILLING_SUPPORT_PHONE = '0713289710';
 
+const DEFAULT_PLAN_ENTITLEMENTS = {
+  slug: 'free-trial',
+  label: 'Free Trial',
+  staffLimit: 7,
+  canExportReports: false,
+  canUseBarcodeScanner: false,
+  canUseOfflineSales: true,
+  canUseOfflineReports: true,
+  canUseOfflineSalesHistory: true,
+  featureHighlights: [
+    '7 staff onboarding slots',
+    'Desktop web access',
+    'Offline sales and reports',
+  ],
+};
+
+export const getBusinessPlan = (business) => {
+  const plan = business?.current_plan || business?.billing_plans || null;
+  if (plan?.slug) {
+    return plan;
+  }
+
+  return null;
+};
+
+export const getPlanEntitlements = (business) => {
+  const plan = getBusinessPlan(business);
+  const slug = String(plan?.slug || '').trim().toLowerCase();
+
+  if (slug === 'lifetime') {
+    return {
+      slug,
+      label: plan?.name || 'Lifetime',
+      staffLimit: null,
+      canExportReports: true,
+      canUseBarcodeScanner: true,
+      canUseOfflineSales: true,
+      canUseOfflineReports: true,
+      canUseOfflineSalesHistory: true,
+      featureHighlights: [
+        'Unlimited staff onboarding',
+        'CSV exports',
+        'Barcode scanner',
+        'Desktop web access',
+        'Offline sales and reports',
+      ],
+    };
+  }
+
+  if (slug === 'beta') {
+    return {
+      slug,
+      label: plan?.name || 'Beta',
+      staffLimit: 7,
+      canExportReports: false,
+      canUseBarcodeScanner: false,
+      canUseOfflineSales: true,
+      canUseOfflineReports: true,
+      canUseOfflineSalesHistory: true,
+      featureHighlights: [
+        '7 staff onboarding slots',
+        'Desktop web access',
+        'Offline sales and reports',
+      ],
+    };
+  }
+
+  return {
+    ...DEFAULT_PLAN_ENTITLEMENTS,
+    slug: slug || DEFAULT_PLAN_ENTITLEMENTS.slug,
+    label: plan?.name || DEFAULT_PLAN_ENTITLEMENTS.label,
+  };
+};
+
+export const getRemainingStaffSlots = (business, currentStaffCount = 0, pendingInviteCount = 0) => {
+  const entitlements = getPlanEntitlements(business);
+  if (entitlements.staffLimit == null) {
+    return null;
+  }
+
+  return Math.max(entitlements.staffLimit - Number(currentStaffCount || 0) - Number(pendingInviteCount || 0), 0);
+};
+
 export const formatBillingAmount = (amountMinor, currency = 'KES') => {
   const safeAmount = Number(amountMinor || 0) / 100;
 

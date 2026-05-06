@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from './supabase';
 import { cleanText } from './textEncoding';
+import { invokeProcessSale } from './sales';
 
 const QUEUE_KEY = 'offline_queue';
 const OFFLINE_SALES_KEY = 'offline_sales';
@@ -9,6 +9,7 @@ const PROFILE_CACHE_PREFIX = `${CACHE_PREFIX}:profile`;
 const DASHBOARD_CACHE_PREFIX = `${CACHE_PREFIX}:dashboard`;
 const STOCK_CACHE_PREFIX = `${CACHE_PREFIX}:stock`;
 const REPORT_CACHE_PREFIX = `${CACHE_PREFIX}:report`;
+const SALES_HISTORY_CACHE_PREFIX = `${CACHE_PREFIX}:sales-history`;
 
 const cacheKey = (prefix, suffix) => `${prefix}:${suffix}`;
 
@@ -132,7 +133,7 @@ export const syncOfflineData = async (businessId, userId) => {
           continue;
         }
 
-        const { data: result, error } = await supabase.rpc('process_sale', {
+        const { data: result, error } = await invokeProcessSale({
           p_business_id: businessId,
           p_reference_number: sale.reference_number,
           p_sold_by: userId,
@@ -145,6 +146,9 @@ export const syncOfflineData = async (businessId, userId) => {
           p_amount_tendered: Number(sale.amount_tendered ?? sale.total_amount ?? 0),
           p_change_given: Number(sale.change_given || 0),
           p_notes: sale.notes || null,
+          p_payment_reference: sale.payment_reference || null,
+          p_payment_payer_name: sale.payment_payer_name || null,
+          p_payment_message: sale.payment_message || null,
           p_items: items.map((item) => ({
             product_id: item.product_id,
             product_name: cleanText(item.product_name || item.name || ''),
@@ -275,4 +279,20 @@ export const getCachedReportSnapshot = async (businessId, period) => {
   }
 
   return readCachedValue(cacheKey(REPORT_CACHE_PREFIX, `${businessId}:${period}`), { maxAgeMs: 14 * 24 * 60 * 60 * 1000 });
+};
+
+export const cacheSalesHistorySnapshot = async (businessId, filter, snapshot) => {
+  if (!businessId || !filter || !snapshot) {
+    return false;
+  }
+
+  return saveCachedValue(cacheKey(SALES_HISTORY_CACHE_PREFIX, `${businessId}:${filter}`), snapshot);
+};
+
+export const getCachedSalesHistorySnapshot = async (businessId, filter) => {
+  if (!businessId || !filter) {
+    return null;
+  }
+
+  return readCachedValue(cacheKey(SALES_HISTORY_CACHE_PREFIX, `${businessId}:${filter}`), { maxAgeMs: 14 * 24 * 60 * 60 * 1000 });
 };

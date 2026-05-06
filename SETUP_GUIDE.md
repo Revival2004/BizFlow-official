@@ -5,8 +5,8 @@ This BizFlow version now uses:
 - normal business signup with no token
 - a built-in 7-day free trial for every new business
 - Paystack billing for later upgrades
-- Beta at `$7/month`
-- Lifetime at `$100` one-time
+- Beta at `KES 900/month`
+- Lifetime at `KES 12,900` one-time
 - staff invite tokens only for people joining an existing business
 - per-business M-Pesa settings managed by each business admin
 - a read-only owner view for onboarded client emails
@@ -127,8 +127,8 @@ When a business wants to continue after the free trial, or upgrade later:
 2. Open `Quick Access -> Settings`.
 3. Go to `BizFlow Billing`.
 4. Choose:
-   - `Beta` for `$7/month`
-   - `Lifetime` for `$100` one-time
+   - `Beta` for `KES 900/month`
+   - `Lifetime` for `KES 12,900` one-time
 5. Tap `Continue to Paystack`.
 6. Finish the payment on Paystack.
 7. Tap `Verify Payment`.

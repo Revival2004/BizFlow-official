@@ -35,12 +35,11 @@ export default function LoginScreen({ navigation }) {
             <Ionicons name="business" size={40} color={COLORS.white} />
           </View>
           <Text style={styles.appName}>BizFlow</Text>
-          <Text style={styles.tagline}>Business Management Suite</Text>
+          <Text style={styles.tagline}>Retail operations</Text>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to your account</Text>
+          <Text style={styles.title}>Sign In</Text>
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Email Address</Text>
@@ -87,12 +86,10 @@ export default function LoginScreen({ navigation }) {
 
           <TouchableOpacity onPress={() => navigation.navigate('Register')} style={styles.registerLink}>
             <Text style={styles.registerLinkText}>
-              Starting a business or joining a team? <Text style={styles.registerLinkBold}>Register here</Text>
+              New business or team invite? <Text style={styles.registerLinkBold}>Register</Text>
             </Text>
           </TouchableOpacity>
         </View>
-
-        <Text style={styles.footer}>BizFlow v1.0 - 7-day free trial, Beta and Lifetime billing</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -136,5 +133,4 @@ const styles = StyleSheet.create({
   registerLink: { alignItems: 'center', marginTop: 16 },
   registerLinkText: { fontSize: 13, color: COLORS.textLight },
   registerLinkBold: { color: COLORS.secondary, fontWeight: '700' },
-  footer: { textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 24 },
 });

@@ -41,6 +41,7 @@ function LowStockToast({ message, trigger }) {
 const emptyForm = {
   name: '',
   sku: '',
+  barcode: '',
   cost_price: '',
   selling_price: '',
   quantity: '',
@@ -204,7 +205,8 @@ export default function StockScreen() {
   const filtered = products.filter((product) => {
     const matchesSearch =
       cleanText(product.name || '').toLowerCase().includes(searchTerm) ||
-      cleanText(product.sku || '').toLowerCase().includes(searchTerm);
+      cleanText(product.sku || '').toLowerCase().includes(searchTerm) ||
+      cleanText(product.barcode || '').toLowerCase().includes(searchTerm);
 
     const matchesCategory = deferredCategory === 'all' || product.category_id === deferredCategory;
     return matchesSearch && matchesCategory;
@@ -237,6 +239,7 @@ export default function StockScreen() {
     const payload = {
       name: cleanText(form.name.trim()),
       sku: cleanText(form.sku || '') || null,
+      barcode: cleanText(form.barcode || '') || null,
       cost_price: parseFloat(form.cost_price),
       selling_price: parseFloat(form.selling_price),
       quantity: parseInt(form.quantity, 10) || 0,
@@ -575,7 +578,7 @@ export default function StockScreen() {
                 <Ionicons name="search" size={17} color={colors.textLight} />
                 <TextInput
                   style={{ flex: 1, marginLeft: 10, fontSize: 14, color: colors.text }}
-                  placeholder="Search products or SKU"
+                  placeholder="Search products, SKU or barcode"
                   value={search}
                   onChangeText={(value) => setSearch(value)}
                   placeholderTextColor={colors.textLight}
@@ -656,7 +659,7 @@ export default function StockScreen() {
                   </View>
 
                   <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4 }}>
-                    {item.sku ? `SKU ${cleanText(item.sku || '')} - ` : ''}{cleanText(item.categories?.name || 'Uncategorised')}
+                    {item.sku ? `SKU ${cleanText(item.sku || '')} · ` : ''}{item.barcode ? `Code ${cleanText(item.barcode || '')} · ` : ''}{cleanText(item.categories?.name || 'Uncategorised')}
                   </Text>
                 </View>
               </View>
@@ -699,6 +702,7 @@ export default function StockScreen() {
                       setForm({
                         name: cleanText(item.name || ''),
                         sku: cleanText(item.sku || ''),
+                        barcode: cleanText(item.barcode || ''),
                         cost_price: String(item.cost_price),
                         selling_price: String(item.selling_price),
                         quantity: String(item.quantity),
@@ -720,6 +724,11 @@ export default function StockScreen() {
                     style={{ width: 48, height: 42, borderRadius: 12, backgroundColor: colors.danger + '14', alignItems: 'center', justifyContent: 'center' }}
                     onPress={() => Alert.alert('Delete', `Delete "${cleanText(item.name || '')}"?`, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: async () => {
                       if (productActionRef.current) {
+                        return;
+                      }
+
+                      if (isOffline) {
+                        Alert.alert('Internet Required', 'Reconnect before deleting products so BizFlow keeps stock consistent across devices.');
                         return;
                       }
 
@@ -764,7 +773,8 @@ export default function StockScreen() {
             <ScrollView showsVerticalScrollIndicator={false}>
               {[
                 { label: 'Product Name *', key: 'name', placeholder: 'e.g. Coca Cola 500ml' },
-                { label: 'SKU / Barcode', key: 'sku', placeholder: 'Optional' },
+                { label: 'SKU', key: 'sku', placeholder: 'Optional' },
+                { label: 'Barcode', key: 'barcode', placeholder: 'Optional' },
                 { label: 'Cost Price (KES) *', key: 'cost_price', placeholder: '0.00', numeric: true },
                 { label: 'Selling Price (KES) *', key: 'selling_price', placeholder: '0.00', numeric: true },
                 { label: 'Quantity', key: 'quantity', placeholder: '0', numeric: true },

@@ -5,6 +5,7 @@ import {
   Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import { supabase } from '../../utils/supabase';
@@ -19,6 +20,8 @@ import {
   isValidKenyanPhone,
   normalizeKenyanPhone,
 } from '../../utils/mpesa';
+import { parsePaymentMessage } from '../../utils/paymentMessages';
+import { invokeProcessSale } from '../../utils/sales';
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -63,14 +66,15 @@ function LowStockToast({ message, trigger }) {
 const PAYMENT_OPTIONS = [
   { key: 'cash', label: 'Cash', icon: 'cash' },
   { key: 'card', label: 'Card', icon: 'card' },
-  { key: 'transfer', label: 'Transfer', icon: 'swap-horizontal' },
+  { key: 'transfer', label: 'Digital', icon: 'swap-horizontal' },
   { key: 'mpesa', label: 'M-Pesa', icon: 'phone-portrait' },
 ];
 
 export default function NewSaleScreen({ navigation }) {
-  const { profile, hasPermission } = useAuth();
+  const { profile, hasPermission, planEntitlements } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const syncInProgressRef = useRef(false);
   const processingRef = useRef(false);
   const fetchRequestRef = useRef(0);
@@ -91,11 +95,19 @@ export default function NewSaleScreen({ navigation }) {
   const [mpesaCheckoutLoading, setMpesaCheckoutLoading] = useState(false);
   const [mpesaCheckout, setMpesaCheckout] = useState(null);
   const [pendingMpesa, setPendingMpesa] = useState(null);
+  const [barcodeModal, setBarcodeModal] = useState(false);
+  const [barcodeLocked, setBarcodeLocked] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState('');
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentPayerName, setPaymentPayerName] = useState('');
   const deferredSearch = useDeferredValue(search);
 
   const canCreateSale = hasPermission('create_sale');
   const mpesaEnabled = Boolean(mpesaCheckout?.configured && mpesaCheckout?.enabled);
   const cartLocked = processing || Boolean(pendingMpesa);
+  const canUseBarcodeScanner = Boolean(planEntitlements?.canUseBarcodeScanner);
+  const usesManualDigitalEvidence = paymentMethod === 'card' || paymentMethod === 'transfer';
+  const parsedPaymentMessage = parsePaymentMessage(paymentMessage);
 
   useEffect(() => {
     pendingMpesaRef.current = pendingMpesa;
@@ -184,6 +196,81 @@ export default function NewSaleScreen({ navigation }) {
 
   const showToast = (message) => {
     setToast({ message, trigger: Date.now() });
+  };
+
+  const fillDigitalPaymentDetails = (message, { force = false } = {}) => {
+    const parsed = parsePaymentMessage(message);
+
+    setPaymentReference((current) => {
+      if (!parsed.paymentReference) {
+        return force ? '' : current;
+      }
+      return force || !cleanText(current) ? parsed.paymentReference : current;
+    });
+
+    setPaymentPayerName((current) => {
+      if (!parsed.payerName) {
+        return force ? '' : current;
+      }
+      return force || !cleanText(current) ? parsed.payerName : current;
+    });
+
+    if (parsed.payerName) {
+      setCustomerName((current) => (force || !cleanText(current) ? parsed.payerName : current));
+    }
+  };
+
+  const handlePaymentMessageChange = (value) => {
+    setPaymentMessage(value);
+    fillDigitalPaymentDetails(value);
+  };
+
+  const closeBarcodeScanner = () => {
+    setBarcodeModal(false);
+    setBarcodeLocked(false);
+  };
+
+  const openBarcodeScanner = async () => {
+    if (!canUseBarcodeScanner) {
+      Alert.alert('Lifetime Feature', 'Barcode scanning is available on the Lifetime plan.');
+      return;
+    }
+
+    const permission = cameraPermission?.granted
+      ? cameraPermission
+      : await requestCameraPermission();
+
+    if (!permission?.granted) {
+      Alert.alert('Camera Required', 'Allow camera access to scan barcodes.');
+      return;
+    }
+
+    setBarcodeLocked(false);
+    setBarcodeModal(true);
+  };
+
+  const handleBarcodeScanned = ({ data }) => {
+    if (barcodeLocked || cartLocked) {
+      return;
+    }
+
+    setBarcodeLocked(true);
+    const scannedCode = cleanText(data || '');
+    const normalizedCode = scannedCode.toLowerCase();
+    const product = products.find((entry) => (
+      cleanText(entry.barcode || '').toLowerCase() === normalizedCode ||
+      cleanText(entry.sku || '').toLowerCase() === normalizedCode
+    ));
+
+    closeBarcodeScanner();
+    setSearch(scannedCode);
+
+    if (product) {
+      addToCart(product);
+      return;
+    }
+
+    Alert.alert('No Match', 'No product matched that barcode yet. You can still search or save the barcode on the product record.');
   };
 
   const fetchMpesaCheckoutStatus = async () => {
@@ -291,7 +378,8 @@ export default function NewSaleScreen({ navigation }) {
   const searchTerm = cleanText(deferredSearch || '').toLowerCase();
   const filtered = products.filter((product) =>
     cleanText(product.name || '').toLowerCase().includes(searchTerm) ||
-    cleanText(product.sku || '').toLowerCase().includes(searchTerm),
+    cleanText(product.sku || '').toLowerCase().includes(searchTerm) ||
+    cleanText(product.barcode || '').toLowerCase().includes(searchTerm),
   );
 
   const addToCart = (product) => {
@@ -373,6 +461,9 @@ export default function NewSaleScreen({ navigation }) {
     setAmountTendered('');
     setCustomerName('');
     setCustomerPhone('');
+    setPaymentMessage('');
+    setPaymentReference('');
+    setPaymentPayerName('');
   };
 
   const checkPendingMpesaStatus = async (intentId, { silent = false } = {}) => {
@@ -468,6 +559,9 @@ export default function NewSaleScreen({ navigation }) {
         referenceNumber: ref,
         customerName: salePayload.customer_name,
         customerPhone: normalizedPhone,
+        paymentPayerName: salePayload.payment_payer_name,
+        paymentReference: salePayload.payment_reference,
+        paymentMessage: salePayload.payment_message,
         totalAmount: salePayload.total_amount,
         costTotal: salePayload.cost_total,
         profit: salePayload.profit,
@@ -521,13 +615,22 @@ export default function NewSaleScreen({ navigation }) {
     setProcessing(true);
     const ref = `SALE-${Date.now().toString().slice(-8)}`;
     const cleanedCustomerName = cleanText(customerName || '').trim();
+    const cleanedPaymentPayerName = cleanText(paymentPayerName || '').trim();
+    const cleanedPaymentReference = cleanText(paymentReference || '').trim().toUpperCase();
+    const cleanedPaymentMessage = cleanText(paymentMessage || '').trim();
+    const parsedPhone = parsedPaymentMessage.customerPhone || null;
+    const resolvedCustomerName = cleanedCustomerName || cleanedPaymentPayerName || null;
 
     const salePayload = {
       reference_number: ref,
+      created_at: new Date().toISOString(),
       business_id: profile.business_id,
       sold_by: profile.id,
-      customer_name: cleanedCustomerName || null,
-      customer_phone: paymentMethod === 'mpesa' ? normalizeKenyanPhone(customerPhone) || null : null,
+      customer_name: resolvedCustomerName,
+      customer_phone: paymentMethod === 'mpesa' ? normalizeKenyanPhone(customerPhone) || null : parsedPhone,
+      payment_payer_name: cleanedPaymentPayerName || null,
+      payment_reference: cleanedPaymentReference || null,
+      payment_message: usesManualDigitalEvidence ? cleanedPaymentMessage || null : null,
       total_amount: subtotal,
       cost_total: totalCost,
       profit,
@@ -581,7 +684,7 @@ export default function NewSaleScreen({ navigation }) {
         return;
       }
 
-      const { data: result, error: saleError } = await supabase.rpc('process_sale', {
+      const { data: result, error: saleError } = await invokeProcessSale({
         p_business_id: profile.business_id,
         p_reference_number: ref,
         p_sold_by: profile.id,
@@ -594,6 +697,9 @@ export default function NewSaleScreen({ navigation }) {
         p_amount_tendered: salePayload.amount_tendered,
         p_change_given: salePayload.change_given,
         p_notes: salePayload.notes,
+        p_payment_reference: salePayload.payment_reference,
+        p_payment_payer_name: salePayload.payment_payer_name,
+        p_payment_message: salePayload.payment_message,
         p_items: itemsPayload,
       });
 
@@ -652,11 +758,17 @@ export default function NewSaleScreen({ navigation }) {
           <Ionicons name="search" size={18} color={colors.textLight} />
           <TextInput
             style={{ flex: 1, marginLeft: 8, fontSize: 14, color: colors.text }}
-            placeholder="Search products or SKU..."
+            placeholder="Search product, SKU or barcode..."
             value={search}
             onChangeText={setSearch}
             placeholderTextColor={colors.textLight}
           />
+          <TouchableOpacity
+            onPress={openBarcodeScanner}
+            style={{ width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: canUseBarcodeScanner ? colors.secondary + '12' : colors.bg }}
+          >
+            <Ionicons name="scan" size={18} color={canUseBarcodeScanner ? colors.secondary : colors.textLight} />
+          </TouchableOpacity>
         </View>
         <FlatList
           data={filtered}
@@ -862,8 +974,8 @@ export default function NewSaleScreen({ navigation }) {
                   <Text style={{ color: colors.text, fontWeight: '700', fontSize: 12 }}>Business M-Pesa Checkout</Text>
                   <Text style={{ color: colors.textLight, fontSize: 12, lineHeight: 18, marginTop: 4 }}>
                     {mpesaEnabled
-                      ? 'BizFlow will send an STK push to the customer phone, then complete the sale automatically after Safaricom confirms payment.'
-                      : 'A business admin must enable M-Pesa in Profile -> Payments before this method can be used.'}
+                      ? 'BizFlow sends the STK push and closes the sale after Safaricom confirms payment.'
+                      : 'Enable M-Pesa in Settings before using this payment method.'}
                   </Text>
                   {mpesaCheckout?.shortcode_hint ? (
                     <Text style={{ color: colors.textLight, fontSize: 11, marginTop: 6 }}>
@@ -885,7 +997,7 @@ export default function NewSaleScreen({ navigation }) {
                   autoFocus
                 />
                 <Text style={{ fontSize: 11, color: colors.textLight, marginBottom: 8 }}>
-                  Safaricom format only. BizFlow accepts 07XXXXXXXX or 2547XXXXXXXX.
+                  Safaricom only: 07XXXXXXXX or 2547XXXXXXXX.
                 </Text>
               </>
             )}
@@ -907,6 +1019,66 @@ export default function NewSaleScreen({ navigation }) {
                 {amountTendered ? (
                   <Text style={{ fontSize: 18, fontWeight: '700', color: change >= 0 ? colors.success : colors.danger, textAlign: 'center', marginBottom: 8 }}>
                     {change >= 0 ? `Change: ${fmt(change)}` : `Still needs: ${fmt(Math.abs(change))}`}
+                  </Text>
+                ) : null}
+              </>
+            )}
+
+            {usesManualDigitalEvidence && (
+              <>
+                <View style={{ backgroundColor: colors.bg, borderRadius: 12, padding: 12, marginBottom: 12 }}>
+                  <Text style={{ color: colors.text, fontWeight: '700', fontSize: 12 }}>Digital Payment Details</Text>
+                  <Text style={{ color: colors.textLight, fontSize: 12, lineHeight: 18, marginTop: 4 }}>
+                    Paste the payment message to capture the payer name and reference automatically.
+                  </Text>
+                </View>
+
+                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, marginBottom: 8 }}>
+                  Payment Message
+                </Text>
+                <TextInput
+                  style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, minHeight: 88, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 10, textAlignVertical: 'top' }}
+                  placeholder="Paste the M-Pesa, bank or card confirmation message"
+                  value={paymentMessage}
+                  onChangeText={handlePaymentMessageChange}
+                  placeholderTextColor={colors.textLight}
+                  multiline
+                />
+
+                <TouchableOpacity
+                  style={{ alignSelf: 'flex-start', backgroundColor: colors.secondary + '12', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 12 }}
+                  onPress={() => fillDigitalPaymentDetails(paymentMessage, { force: true })}
+                >
+                  <Text style={{ color: colors.secondary, fontWeight: '700', fontSize: 12 }}>Read Message</Text>
+                </TouchableOpacity>
+
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 5 }}>Payer Name</Text>
+                    <TextInput
+                      style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg }}
+                      placeholder="Auto-filled if found"
+                      value={paymentPayerName}
+                      onChangeText={setPaymentPayerName}
+                      placeholderTextColor={colors.textLight}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 5 }}>Reference</Text>
+                    <TextInput
+                      style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 46, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg }}
+                      placeholder="Auto-filled if found"
+                      value={paymentReference}
+                      onChangeText={setPaymentReference}
+                      placeholderTextColor={colors.textLight}
+                      autoCapitalize="characters"
+                    />
+                  </View>
+                </View>
+
+                {(parsedPaymentMessage.payerName || parsedPaymentMessage.paymentReference) ? (
+                  <Text style={{ fontSize: 11, color: colors.textLight, marginBottom: 8 }}>
+                    Captured: {[parsedPaymentMessage.payerName, parsedPaymentMessage.paymentReference].filter(Boolean).join(' | ')}
                   </Text>
                 ) : null}
               </>
@@ -934,6 +1106,45 @@ export default function NewSaleScreen({ navigation }) {
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      <Modal visible={barcodeModal} animationType="slide">
+        <View style={{ flex: 1, backgroundColor: '#040B18' }}>
+          <CameraView
+            style={{ flex: 1 }}
+            facing="back"
+            onBarcodeScanned={handleBarcodeScanned}
+            barcodeScannerSettings={{
+              barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39', 'itf14', 'codabar', 'qr'],
+            }}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(4,11,24,0.38)', padding: 18, justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <TouchableOpacity
+                  style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}
+                  onPress={closeBarcodeScanner}
+                >
+                  <Ionicons name="close" size={22} color="#fff" />
+                </TouchableOpacity>
+                <View style={{ backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 }}>
+                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>Lifetime Barcode Scanner</Text>
+                </View>
+              </View>
+
+              <View style={{ alignItems: 'center' }}>
+                <View style={{ width: '82%', height: 210, borderRadius: 26, borderWidth: 2, borderColor: '#7DD3FC', backgroundColor: 'transparent' }} />
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', marginTop: 18 }}>Align the barcode inside the frame</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.72)', fontSize: 12, marginTop: 6, textAlign: 'center' }}>
+                  BizFlow will add the product instantly when it finds a match.
+                </Text>
+              </View>
+
+              <Text style={{ color: 'rgba(255,255,255,0.68)', fontSize: 12, textAlign: 'center' }}>
+                USB barcode scanners also work in the search bar on desktop web.
+              </Text>
+            </View>
+          </CameraView>
         </View>
       </Modal>
 

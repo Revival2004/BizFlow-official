@@ -317,7 +317,7 @@ export default function ProfileScreen() {
             {canEditBusinessName && (
               <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
                 <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-                  Your staff and invite emails will use this name. Keep it customer-facing and easy for your team to recognize.
+                  This is the name your team sees in BizFlow and invites.
                 </Text>
               </View>
             )}
@@ -333,7 +333,7 @@ export default function ProfileScreen() {
               autoFocus
             />
             <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-              This updates the team-facing business name without affecting your billing records or legal owner details.
+              This updates the team-facing business name only.
             </Text>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
               <TouchableOpacity
@@ -376,7 +376,7 @@ export default function ProfileScreen() {
               <View style={{ flex: 1, paddingRight: 12 }}>
                 <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>M-Pesa Integration</Text>
                 <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
-                  This business controls its own Daraja credentials. Save them once here, then staff can use M-Pesa at checkout.
+                  Save this business's Daraja details here, then staff can use M-Pesa at checkout.
                 </Text>
               </View>
               <Switch
@@ -467,7 +467,7 @@ export default function ProfileScreen() {
                       ? `Configured for ${mpesaEnvironmentLabel(paymentSummary.environment)} ${mpesaTillTypeLabel(paymentSummary.till_type)}.`
                       : 'Not configured yet.'}
                     {' '}
-                    {paymentSummary?.configured && paymentSummary?.is_enabled ? 'M-Pesa is enabled for checkout.' : 'Enable the switch above when you are ready.'}
+                    {paymentSummary?.configured && paymentSummary?.is_enabled ? 'Checkout is enabled.' : 'Turn the switch on when ready.'}
                   </Text>
                   {paymentSummary?.last_test_status ? (
                     <Text style={{ color: colors.textLight, fontSize: 11, marginTop: 6 }}>
@@ -526,8 +526,6 @@ export default function ProfileScreen() {
         <Ionicons name="log-out-outline" size={20} color={colors.danger} />
         <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>Sign Out</Text>
       </TouchableOpacity>
-
-      <Text style={{ textAlign: 'center', color: colors.textLight, fontSize: 11, marginTop: 20 }}>BizFlow v1.0</Text>
     </ScrollView>
   );
 }

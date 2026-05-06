@@ -10,6 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import { COLORS, ROLE_PERMISSIONS } from '../../utils/constants';
 import { humanizeLabel } from '../../utils/data';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
+import { getRemainingStaffSlots } from '../../utils/billing';
 
 const AVAILABLE_ROLES = [
   { key: 'sales_manager', label: 'Sales Manager', desc: 'Can sell, view reports and profits', color: COLORS.secondary, icon: 'trending-up' },
@@ -19,7 +20,7 @@ const AVAILABLE_ROLES = [
 ];
 
 export default function StaffScreen() {
-  const { profile, hasPermission } = useAuth();
+  const { profile, hasPermission, planEntitlements } = useAuth();
   const fetchRequestRef = useRef(0);
   const inviteActionRef = useRef(false);
   const memberActionRef = useRef(false);
@@ -203,6 +204,14 @@ export default function StaffScreen() {
       return;
     }
 
+    if (remainingStaffSlots !== null && remainingStaffSlots <= 0) {
+      Alert.alert(
+        'Staff Limit Reached',
+        `${planEntitlements.label} supports up to ${planEntitlements.staffLimit} staff onboarding slots. Upgrade to Lifetime for unlimited staff and full platform features.`,
+      );
+      return;
+    }
+
     inviteActionRef.current = true;
     setSending(true);
 
@@ -380,6 +389,8 @@ export default function StaffScreen() {
   const roleIcon = (roleName) => AVAILABLE_ROLES.find((role) => role.key === roleName)?.icon || 'person';
   const activeStaffCount = staff.filter((member) => member.status === 'active').length;
   const pendingInviteCount = invites.filter((invite) => invite.status === 'pending').length;
+  const remainingStaffSlots = getRemainingStaffSlots(profile?.businesses, activeStaffCount, pendingInviteCount);
+  const staffLimitReached = remainingStaffSlots !== null && remainingStaffSlots <= 0;
 
   const getInviteStatus = (invite) => {
     if (invite.status === 'pending') {
@@ -412,12 +423,30 @@ export default function StaffScreen() {
           <Text style={[styles.tabText, tab === 'invites' && styles.tabTextActive]}>Invites ({pendingInviteCount})</Text>
         </TouchableOpacity>
         {hasPermission('invite_staff') && (
-          <TouchableOpacity style={styles.inviteBtn} onPress={() => setInviteModal(true)}>
+          <TouchableOpacity style={[styles.inviteBtn, staffLimitReached && { opacity: 0.55 }]} onPress={() => {
+            if (staffLimitReached) {
+              Alert.alert(
+                'Staff Limit Reached',
+                `${planEntitlements.label} supports up to ${planEntitlements.staffLimit} staff onboarding slots. Upgrade to Lifetime for unlimited staff and CSV exports.`,
+              );
+              return;
+            }
+            setInviteModal(true);
+          }}>
             <Ionicons name="person-add" size={16} color={COLORS.white} />
             <Text style={styles.inviteBtnText}>Invite</Text>
           </TouchableOpacity>
         )}
       </View>
+
+      {planEntitlements.staffLimit !== null && (
+        <View style={styles.planBanner}>
+          <Ionicons name="shield-half" size={16} color={COLORS.warning} />
+          <Text style={styles.planBannerText}>
+            {planEntitlements.label} includes {planEntitlements.staffLimit} staff onboarding slots. {remainingStaffSlots} slot{remainingStaffSlots === 1 ? '' : 's'} left.
+          </Text>
+        </View>
+      )}
 
       {tab === 'staff' ? (
         <FlatList
@@ -658,6 +687,8 @@ const styles = StyleSheet.create({
   tabTextActive: { color: COLORS.secondary },
   inviteBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.secondary, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
   inviteBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 13 },
+  planBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginBottom: 10, backgroundColor: '#FEF3C7', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 },
+  planBannerText: { flex: 1, color: '#92400E', fontSize: 12, fontWeight: '600', lineHeight: 18 },
   list: { padding: 12, paddingTop: 0 },
   staffCard: { backgroundColor: COLORS.white, borderRadius: 14, padding: 14, marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
   avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginRight: 12 },

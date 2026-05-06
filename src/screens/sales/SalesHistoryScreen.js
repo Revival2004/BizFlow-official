@@ -4,12 +4,19 @@ import {
   TextInput, ActivityIndicator, Modal, ScrollView, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 import { cleanObject, cleanText } from '../../utils/textEncoding';
+import { cacheSalesHistorySnapshot, getCachedSalesHistorySnapshot, getOfflineSales } from '../../utils/offline';
+
+const toTimestamp = (value) => {
+  const date = new Date(value || 0);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+};
 
 export default function SalesHistoryScreen() {
   const { profile, hasPermission } = useAuth();
@@ -23,6 +30,7 @@ export default function SalesHistoryScreen() {
   const [selectedSale, setSelectedSale] = useState(null);
   const [saleItems, setSaleItems] = useState([]);
   const [loadingItems, setLoadingItems] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
@@ -37,6 +45,18 @@ export default function SalesHistoryScreen() {
     fetchSales();
   }, [filter, profile?.business_id]);
 
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      setIsOffline(!state.isConnected);
+    });
+
+    NetInfo.fetch().then((state) => {
+      setIsOffline(!state.isConnected);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   const fetchSales = async () => {
     if (!profile?.business_id) {
       return;
@@ -49,7 +69,7 @@ export default function SalesHistoryScreen() {
     try {
       let query = supabase
         .from('sales')
-        .select('*')
+        .select('*, sale_items(*)')
         .eq('business_id', profile.business_id)
         .order('created_at', { ascending: false })
         .limit(100);
@@ -83,6 +103,7 @@ export default function SalesHistoryScreen() {
       startTransition(() => {
         setSales(nextSales);
       });
+      await cacheSalesHistorySnapshot(profile.business_id, filter, { sales: nextSales });
 
       if (selectedSale?.id) {
         const refreshedSale = nextSales.find((entry) => entry.id === selectedSale.id);
@@ -100,7 +121,39 @@ export default function SalesHistoryScreen() {
       }
     } catch (error) {
       if (salesRequestRef.current === requestId) {
-        Alert.alert('Error', error.message);
+        const cached = await getCachedSalesHistorySnapshot(profile?.business_id, filter);
+        const offlineSales = await getOfflineSales();
+        const unsyncedSales = offlineSales
+          .filter((entry) => !entry?.synced)
+          .map((entry, index) => ({
+            ...(entry.sale || {}),
+            id: entry.sale?.reference_number || `offline-${index}`,
+            sale_items: entry.items || [],
+            sellerName: profile?.full_name || 'Staff',
+            status: entry.sale?.status || 'completed',
+            customer_name: entry.sale?.customer_name || 'Walk-in Customer',
+            payment_payer_name: entry.sale?.payment_payer_name || null,
+            payment_reference: entry.sale?.payment_reference || null,
+            payment_message: entry.sale?.payment_message || null,
+            payment_method: entry.sale?.payment_method || 'cash',
+          }));
+        const mergedByReference = new Map();
+
+        [...(cached?.sales || []), ...unsyncedSales].forEach((sale) => {
+          const key = sale.reference_number || sale.id;
+          if (key) {
+            mergedByReference.set(key, sale);
+          }
+        });
+
+        const fallbackSales = [...mergedByReference.values()].sort((a, b) => toTimestamp(b.created_at) - toTimestamp(a.created_at));
+        if (fallbackSales.length > 0) {
+          startTransition(() => {
+            setSales(cleanObject(fallbackSales));
+          });
+        } else {
+          Alert.alert('Error', error.message);
+        }
       }
     } finally {
       if (salesRequestRef.current === requestId) {
@@ -110,6 +163,18 @@ export default function SalesHistoryScreen() {
   };
 
   const fetchSaleItems = async (saleId, showLoader = false) => {
+    if (isOffline) {
+      const cachedSale = sales.find((entry) => entry.id === saleId);
+      const nextItems = cleanObject(cachedSale?.sale_items || []);
+      startTransition(() => {
+        setSaleItems(nextItems);
+      });
+      if (showLoader) {
+        setLoadingItems(false);
+      }
+      return nextItems;
+    }
+
     if (showLoader) {
       setLoadingItems(true);
     }
@@ -151,12 +216,12 @@ export default function SalesHistoryScreen() {
 
   const viewSale = async (sale) => {
     setSelectedSale(sale);
-    setSaleItems([]);
+    setSaleItems(cleanObject(sale?.sale_items || []));
     await fetchSaleItems(sale.id, true);
   };
 
   useRealtimeRefresh({
-    enabled: Boolean(profile?.business_id),
+    enabled: Boolean(profile?.business_id) && !isOffline,
     channelName: `sales-history:${profile?.business_id}:${filter}`,
     bindings: [
       {
@@ -235,6 +300,8 @@ export default function SalesHistoryScreen() {
   const filteredSales = searchTerm ? sales.filter((sale) =>
     cleanText(sale.reference_number || '').toLowerCase().includes(searchTerm) ||
     cleanText(sale.customer_name || '').toLowerCase().includes(searchTerm) ||
+    cleanText(sale.payment_payer_name || '').toLowerCase().includes(searchTerm) ||
+    cleanText(sale.payment_reference || '').toLowerCase().includes(searchTerm) ||
     cleanText(sale.sellerName || '').toLowerCase().includes(searchTerm)
   ) : sales;
 
@@ -251,12 +318,18 @@ export default function SalesHistoryScreen() {
 
   return (
     <View style={styles.container}>
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="cloud-offline" size={16} color="#fff" />
+          <Text style={styles.offlineBannerText}>Offline mode: showing your last synced sales history and any unsynced local sales.</Text>
+        </View>
+      )}
       <View style={styles.header}>
         <View style={styles.searchRow}>
           <Ionicons name="search" size={18} color={COLORS.textLight} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search by ref, customer..."
+            placeholder="Search ref, customer or payer..."
             value={search}
             onChangeText={setSearch}
             placeholderTextColor={COLORS.textLight}
@@ -292,6 +365,9 @@ export default function SalesHistoryScreen() {
               <View style={styles.saleCardLeft}>
                 <Text style={styles.saleRef}>{cleanText(item.reference_number || '')}</Text>
                 <Text style={styles.saleCustomer}>{cleanText(item.customer_name || 'Walk-in Customer')}</Text>
+                {item.payment_payer_name ? (
+                  <Text style={styles.saleMeta}>{cleanText(item.payment_payer_name || '')}{item.payment_reference ? ` · ${cleanText(item.payment_reference || '')}` : ''}</Text>
+                ) : null}
                 <Text style={styles.saleCashier}>By: {cleanText(item.sellerName || 'Staff')}</Text>
                 <Text style={styles.saleDate}>{new Date(item.created_at).toLocaleString()}</Text>
               </View>
@@ -339,6 +415,24 @@ export default function SalesHistoryScreen() {
                 <Text style={styles.detailLabel}>Payment</Text>
                 <Text style={styles.detailValue}>{selectedSale?.payment_method}</Text>
               </View>
+              {selectedSale?.payment_payer_name ? (
+                <View style={styles.saleDetailRow}>
+                  <Text style={styles.detailLabel}>Payer</Text>
+                  <Text style={styles.detailValue}>{cleanText(selectedSale?.payment_payer_name || '')}</Text>
+                </View>
+              ) : null}
+              {selectedSale?.payment_reference ? (
+                <View style={styles.saleDetailRow}>
+                  <Text style={styles.detailLabel}>Payment Ref</Text>
+                  <Text style={styles.detailValue}>{cleanText(selectedSale?.payment_reference || '')}</Text>
+                </View>
+              ) : null}
+              {selectedSale?.payment_message ? (
+                <View style={styles.saleDetailRow}>
+                  <Text style={styles.detailLabel}>Message</Text>
+                  <Text style={[styles.detailValue, { flex: 1, textAlign: 'right' }]}>{cleanText(selectedSale?.payment_message || '')}</Text>
+                </View>
+              ) : null}
 
               <Text style={[styles.detailLabel, { marginTop: 16, marginBottom: 8 }]}>Items</Text>
               {loadingItems ? (
@@ -380,6 +474,8 @@ export default function SalesHistoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
+  offlineBanner: { backgroundColor: '#F59F00', padding: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  offlineBannerText: { color: '#fff', fontWeight: '700', fontSize: 13, flex: 1, textAlign: 'center' },
   header: { flexDirection: 'row', padding: 12, gap: 10, alignItems: 'center' },
   searchRow: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.white, borderRadius: 10, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: COLORS.border },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 14, color: COLORS.text },
@@ -395,6 +491,7 @@ const styles = StyleSheet.create({
   saleCardLeft: { flex: 1 },
   saleRef: { fontSize: 14, fontWeight: '700', color: COLORS.secondary },
   saleCustomer: { fontSize: 13, color: COLORS.text, marginTop: 2 },
+  saleMeta: { fontSize: 11, color: COLORS.secondary, marginTop: 2, fontWeight: '600' },
   saleCashier: { fontSize: 11, color: COLORS.textLight },
   saleDate: { fontSize: 11, color: COLORS.textLight, marginTop: 2 },
   saleCardRight: { alignItems: 'flex-end' },

@@ -15,7 +15,8 @@ import { fmt } from '../../utils/constants';
 import { attachSellerNames } from '../../utils/data';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 import { cleanText } from '../../utils/textEncoding';
-import { cacheReportSnapshot, getCachedReportSnapshot, getCachedStockSnapshot } from '../../utils/offline';
+import { getPlanEntitlements } from '../../utils/billing';
+import { cacheReportSnapshot, getCachedReportSnapshot, getCachedStockSnapshot, getOfflineSales } from '../../utils/offline';
 
 const UTF8_BOM = '\uFEFF';
 
@@ -36,11 +37,13 @@ const PERIOD_LABELS = {
 
 const buildCsvContent = ({ sales, period, summary }) => {
   const rows = [
-    ['Reference', 'Date', 'Customer', 'Staff', 'Items', 'Total (KES)', 'Cost (KES)', 'Profit (KES)', 'Payment', 'Status'],
+    ['Reference', 'Date', 'Customer', 'Payer', 'Payment Ref', 'Staff', 'Items', 'Total (KES)', 'Cost (KES)', 'Profit (KES)', 'Payment', 'Status'],
     ...sales.map((sale) => [
       cleanText(sale.reference_number || ''),
       new Date(sale.created_at).toLocaleString(),
       cleanText(sale.customer_name || 'Walk-in'),
+      cleanText(sale.payment_payer_name || ''),
+      cleanText(sale.payment_reference || ''),
       cleanText(sale.sellerName || ''),
       sale.items_count ?? sale.sale_items?.length ?? 0,
       Number(sale.total_amount || 0).toFixed(2),
@@ -61,8 +64,43 @@ const buildCsvContent = ({ sales, period, summary }) => {
   return UTF8_BOM + rows.map((row) => row.map(escapeCsvValue).join(',')).join('\r\n');
 };
 
+const summarizeSales = (sales = []) => {
+  const totalRevenue = sales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
+  const totalProfit = sales.reduce((sum, sale) => sum + Number(sale.profit || 0), 0);
+
+  return {
+    totalSales: sales.length,
+    totalRevenue,
+    totalProfit,
+    margin: totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0,
+  };
+};
+
+const toTimestamp = (value) => {
+  const date = new Date(value || 0);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+};
+
+const mergeSalesForExport = (sales = [], offlineEntries = []) => {
+  const merged = new Map();
+
+  sales.forEach((sale) => {
+    if (sale?.reference_number) {
+      merged.set(sale.reference_number, sale);
+    }
+  });
+
+  offlineEntries.forEach((sale) => {
+    if (sale?.reference_number) {
+      merged.set(sale.reference_number, sale);
+    }
+  });
+
+  return [...merged.values()].sort((a, b) => toTimestamp(b.created_at) - toTimestamp(a.created_at));
+};
+
 export default function ReportsScreen() {
-  const { profile, hasPermission } = useAuth();
+  const { profile, hasPermission, planEntitlements } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const reportRequestRef = useRef(0);
@@ -82,6 +120,7 @@ export default function ReportsScreen() {
   const [isOffline, setIsOffline] = useState(false);
   const [fastMovers, setFastMovers] = useState([]);
   const deferredItemSearch = useDeferredValue(itemSearch);
+  const billingEntitlements = getPlanEntitlements(profile?.businesses);
 
   useEffect(() => {
     fetchReport();
@@ -216,6 +255,7 @@ export default function ReportsScreen() {
       const sales = salesRes.data || [];
       const items = itemsRes.data || [];
       const products = productsRes.data || [];
+      const salesWithNames = await attachSellerNames(sales);
       const totalRevenue = sales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
       const totalCost = sales.reduce((sum, sale) => sum + Number(sale.cost_total || 0), 0);
       const totalProfit = sales.reduce((sum, sale) => sum + Number(sale.profit || 0), 0);
@@ -331,6 +371,7 @@ export default function ReportsScreen() {
         topProducts: nextTopProducts,
         fastMovers: nextFastMovers,
         salesByDay: days,
+        exportSales: salesWithNames,
       });
     } catch (error) {
       if (reportRequestRef.current === requestId) {
@@ -403,6 +444,14 @@ export default function ReportsScreen() {
       return;
     }
 
+    if (!billingEntitlements.canExportReports) {
+      Alert.alert(
+        'Lifetime Feature',
+        'CSV export is available on the Lifetime plan. Beta and Free Trial businesses can still view reports inside BizFlow.',
+      );
+      return;
+    }
+
     if (exporting) {
       return;
     }
@@ -411,23 +460,48 @@ export default function ReportsScreen() {
 
     try {
       const { start } = getDateRange();
-      const { data: rawSales, error } = await supabase
-        .from('sales')
-        .select('*, sale_items(*)')
-        .eq('business_id', profile.business_id)
-        .eq('status', 'completed')
-        .gte('created_at', start)
-        .order('created_at', { ascending: false });
+      let exportSales = [];
 
-      if (error) {
-        throw error;
+      if (!isOffline) {
+        const { data: rawSales, error } = await supabase
+          .from('sales')
+          .select('*, sale_items(*)')
+          .eq('business_id', profile.business_id)
+          .eq('status', 'completed')
+          .gte('created_at', start)
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          throw error;
+        }
+
+        exportSales = await attachSellerNames(rawSales || []);
+      } else {
+        const cached = await getCachedReportSnapshot(profile.business_id, period);
+        const offlineSavedSales = await getOfflineSales();
+        const offlineSalesForPeriod = offlineSavedSales
+          .filter((entry) => !entry?.synced)
+          .map((entry) => ({
+            ...entry.sale,
+            sale_items: entry.items || [],
+            sellerName: profile?.full_name || 'Staff',
+            status: entry.sale?.status || 'completed',
+          }))
+          .filter((sale) => toTimestamp(sale.created_at || sale.savedAt) >= toTimestamp(start));
+
+        exportSales = mergeSalesForExport(cached?.exportSales || [], offlineSalesForPeriod);
       }
 
-      const sales = await attachSellerNames(rawSales || []);
+      if (exportSales.length === 0) {
+        throw new Error(isOffline
+          ? 'No cached report data is available for offline CSV export yet. Open Reports once while online first.'
+          : 'No report rows were available to export.');
+      }
+
       const csv = buildCsvContent({
-        sales,
+        sales: exportSales,
         period,
-        summary: data,
+        summary: isOffline ? summarizeSales(exportSales) : data,
       });
 
       const filename = `BizFlow_Report_${period}_${Date.now()}.csv`;
@@ -535,15 +609,24 @@ export default function ReportsScreen() {
         </View>
 
         <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
-          <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.success, borderRadius: 12, height: 44 }} onPress={exportCSV} disabled={exporting}>
+          <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: billingEntitlements.canExportReports ? colors.success : colors.textLight, borderRadius: 12, height: 44, opacity: billingEntitlements.canExportReports ? 1 : 0.7 }} onPress={exportCSV} disabled={exporting}>
             {exporting ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="download" size={18} color="#fff" />}
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{exporting ? 'Exporting...' : 'Export CSV'}</Text>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{exporting ? 'Exporting...' : billingEntitlements.canExportReports ? 'Export CSV' : 'Lifetime Only'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.card, borderRadius: 12, height: 44, borderWidth: 1.5, borderColor: colors.border }} onPress={() => setItemModal(true)}>
             <Ionicons name="search" size={18} color={colors.secondary} />
             <Text style={{ color: colors.secondary, fontWeight: '700', fontSize: 13 }}>Item Report</Text>
           </TouchableOpacity>
         </View>
+
+        {!billingEntitlements.canExportReports && (
+          <View style={{ backgroundColor: colors.warning + '16', borderRadius: 12, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: colors.warning + '35' }}>
+            <Text style={{ color: colors.text, fontWeight: '700', fontSize: 12 }}>CSV export is a Lifetime feature.</Text>
+            <Text style={{ color: colors.textLight, fontSize: 12, marginTop: 4, lineHeight: 18 }}>
+              Your {billingEntitlements.label} plan can still view full reports on phone and desktop web, but CSV download unlocks on Lifetime.
+            </Text>
+          </View>
+        )}
 
         {loading ? (
           <ActivityIndicator size="large" color={colors.secondary} style={{ marginTop: 40 }} />

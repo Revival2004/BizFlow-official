@@ -76,6 +76,10 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || plans[0] || null;
   const businessBilling = getBusinessBillingState(profile?.businesses);
   const currentPlanId = summary?.current_plan?.id || null;
+  const planFeatureMap = {
+    beta: ['7 staff onboarding slots', 'Desktop web access', 'Offline sales and reports'],
+    lifetime: ['Unlimited staff onboarding', 'CSV exports', 'Barcode scanner', 'Desktop web access', 'Offline sales and reports'],
+  };
 
   const openCheckout = async (authorizationUrl) => {
     if (!authorizationUrl) {
@@ -187,8 +191,8 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
           </Text>
           <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
             {mode === 'gate'
-              ? 'Only your business admin can restore access. Renew the plan on Paystack, then verify the payment here.'
-              : 'Every business starts with a 7-day free trial. Upgrade here later to keep BizFlow running without interruption.'}
+              ? 'Renew on Paystack, then verify the payment here.'
+              : 'Every business starts with a 7-day trial. Upgrade here when you are ready.'}
           </Text>
         </View>
         <View style={{ backgroundColor: accentColor + '15', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 }}>
@@ -218,16 +222,14 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
           <View style={{ backgroundColor: colors.bg, borderRadius: 14, padding: 14, marginBottom: 14 }}>
             <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, marginBottom: 6 }}>Choose a plan</Text>
             <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-              Paystack charges into your platform billing account. Beta is the monthly plan, and Lifetime is a one-time purchase.
+              Beta renews monthly. Lifetime is a one-time upgrade.
             </Text>
-            <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18, marginTop: 8 }}>
-              Need billing help? Contact {PLATFORM_BILLING_SUPPORT_PHONE}.
-            </Text>
+            <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18, marginTop: 8 }}>Billing help: {PLATFORM_BILLING_SUPPORT_PHONE}</Text>
           </View>
 
           {plans.map((plan) => {
             const isSelected = plan.id === selectedPlanId;
-            const features = normalizeBillingFeatures(plan.features);
+            const features = planFeatureMap[plan.slug] || normalizeBillingFeatures(plan.features);
             const durationLabel = planDurationLabel(plan.billing_days, {
               isLifetime: plan.is_lifetime,
               isTrial: plan.is_trial,

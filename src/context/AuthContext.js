@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { isSupabaseConfigured, supabase } from '../utils/supabase';
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh';
 import { cacheProfile, clearCachedProfile, getCachedProfile } from '../utils/offline';
-import { getBusinessBillingState } from '../utils/billing';
+import { getBusinessBillingState, getPlanEntitlements } from '../utils/billing';
 
 const AuthContext = createContext({});
 
@@ -34,7 +34,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*, roles(*), businesses(id, name, display_name, status, billing_status, subscription_started_at, subscription_expires_at)')
+        .select('*, roles(*), businesses(id, name, display_name, status, billing_status, subscription_started_at, subscription_expires_at, current_plan_id, current_plan:billing_plans!businesses_current_plan_id_fkey(id, slug, name, is_lifetime, is_trial, billing_days))')
         .eq('id', userId)
         .maybeSingle();
 
@@ -203,9 +203,10 @@ export const AuthProvider = ({ children }) => {
   const isAdmin = () => profile?.roles?.name === 'admin';
   const billingState = getBusinessBillingState(profile?.businesses);
   const isBillingBlocked = billingState.isBlocked;
+  const planEntitlements = getPlanEntitlements(profile?.businesses);
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signOut, hasPermission, isAdmin, fetchProfile, billingState, isBillingBlocked }}>
+    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signOut, hasPermission, isAdmin, fetchProfile, billingState, isBillingBlocked, planEntitlements }}>
       {children}
     </AuthContext.Provider>
   );
