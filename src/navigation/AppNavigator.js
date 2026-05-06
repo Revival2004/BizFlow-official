@@ -14,13 +14,15 @@ import { useTheme } from '../context/ThemeContext';
 import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
 import DashboardScreen from '../screens/admin/DashboardScreen';
+import OnboardedEmailsScreen from '../screens/admin/OnboardedEmailsScreen';
 import NewSaleScreen from '../screens/sales/NewSaleScreen';
 import SalesHistoryScreen from '../screens/sales/SalesHistoryScreen';
 import StockScreen from '../screens/stock/StockScreen';
 import ReportsScreen from '../screens/reports/ReportsScreen';
 import StaffScreen from '../screens/staff/StaffScreen';
 import ProfileScreen from '../screens/admin/ProfileScreen';
-import SuperAdminScreen from '../screens/admin/SuperAdminScreen';
+import BillingGateScreen from '../screens/admin/BillingGateScreen';
+import { canViewPlatformOnboardings } from '../utils/billing';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -31,7 +33,19 @@ const linking = {
   prefixes: [prefix, 'bizflow://'],
   config: {
     screens: {
-      Auth: { screens: { Register: { path: 'register', parse: { token: t => t } }, Login: 'login' } }
+      Auth: {
+        screens: {
+          Register: {
+            path: 'register',
+            parse: {
+              token: (t) => t,
+              billing_reference: (t) => t,
+              reference: (t) => t,
+            },
+          },
+          Login: 'login',
+        },
+      }
     }
   }
 };
@@ -73,12 +87,13 @@ function SalesStackScreen({ colors, onOpenUtilityMenu, showUtilityButton }) {
 }
 
 function MainTabs({ navigation: rootNavigation }) {
-  const { hasPermission, isSuperAdmin } = useAuth();
+  const { hasPermission, profile } = useAuth();
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const [utilityMenuOpen, setUtilityMenuOpen] = useState(false);
   const tabBarBottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 8);
   const tabBarHeight = (Platform.OS === 'android' ? 62 : 58) + tabBarBottomPadding;
+  const canSeeOnboardings = canViewPlatformOnboardings(profile);
   const utilityItems = [
     hasPermission('manage_staff') ? {
       route: 'Staff',
@@ -89,14 +104,14 @@ function MainTabs({ navigation: rootNavigation }) {
     {
       route: 'Profile',
       label: 'Settings',
-      description: 'Profile, password and payment setup',
+      description: 'Profile, billing and payment setup',
       icon: 'settings-outline',
     },
-    isSuperAdmin() ? {
-      route: 'Control',
-      label: 'Platform Control',
-      description: 'Client tokens and business access',
-      icon: 'shield-checkmark-outline',
+    canSeeOnboardings ? {
+      route: 'Onboardings',
+      label: 'Onboarded Emails',
+      description: 'Read-only client signup emails',
+      icon: 'mail-unread-outline',
     } : null,
   ].filter(Boolean);
   const showUtilityButton = utilityItems.length > 0;
@@ -238,8 +253,9 @@ function MainTabs({ navigation: rootNavigation }) {
 }
 
 function AppStack() {
-  const { hasPermission, isSuperAdmin } = useAuth();
+  const { hasPermission, profile } = useAuth();
   const { colors } = useTheme();
+  const canSeeOnboardings = canViewPlatformOnboardings(profile);
 
   return (
     <Stack.Navigator
@@ -254,10 +270,31 @@ function AppStack() {
       {hasPermission('manage_staff') && (
         <Stack.Screen name="Staff" component={StaffScreen} options={{ title: 'Staff Control' }} />
       )}
-      <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Settings' }} />
-      {isSuperAdmin() && (
-        <Stack.Screen name="Control" component={SuperAdminScreen} options={{ title: 'Platform Control' }} />
+      {canSeeOnboardings && (
+        <Stack.Screen name="Onboardings" component={OnboardedEmailsScreen} options={{ title: 'Onboarded Emails' }} />
       )}
+      <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Settings' }} />
+    </Stack.Navigator>
+  );
+}
+
+function BillingStack() {
+  const { colors } = useTheme();
+
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: colors.header, elevation: 0, shadowOpacity: 0 },
+        headerTintColor: colors.headerText,
+        headerTitleStyle: { fontWeight: '700', fontSize: 18 },
+        cardStyle: { backgroundColor: colors.bg },
+      }}
+    >
+      <Stack.Screen
+        name="BillingGate"
+        component={BillingGateScreen}
+        options={{ title: 'Renew BizFlow Access' }}
+      />
     </Stack.Navigator>
   );
 }
@@ -272,7 +309,7 @@ function AuthStack() {
 }
 
 export default function AppNavigator() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, isBillingBlocked } = useAuth();
   const { colors } = useTheme();
 
   if (loading) return (
@@ -283,7 +320,7 @@ export default function AppNavigator() {
 
   return (
     <NavigationContainer linking={linking}>
-      {user && profile ? <AppStack /> : <AuthStack />}
+      {user && profile ? (isBillingBlocked ? <BillingStack /> : <AppStack />) : <AuthStack />}
     </NavigationContainer>
   );
 }

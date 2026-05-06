@@ -2,9 +2,9 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { isSupabaseConfigured, supabase } from '../utils/supabase';
 import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh';
 import { cacheProfile, clearCachedProfile, getCachedProfile } from '../utils/offline';
+import { getBusinessBillingState } from '../utils/billing';
 
 const AuthContext = createContext({});
-const SUPER_ADMIN_EMAIL = 'revivalthuranira@gmail.com';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -34,7 +34,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*, roles(*), businesses(id, name, display_name, status)')
+        .select('*, roles(*), businesses(id, name, display_name, status, billing_status, subscription_started_at, subscription_expires_at)')
         .eq('id', userId)
         .maybeSingle();
 
@@ -51,7 +51,7 @@ export const AuthProvider = ({ children }) => {
         return {
           data: null,
           error: {
-            message: 'Your account is not approved yet. You need a valid admin token or staff invitation.',
+            message: 'Your BizFlow account is not ready yet. Finish onboarding or ask your business admin for an invite.',
           },
         };
       }
@@ -201,12 +201,11 @@ export const AuthProvider = ({ children }) => {
   };
 
   const isAdmin = () => profile?.roles?.name === 'admin';
-  const isSuperAdmin = () =>
-    profile?.is_super_admin === true &&
-    profile?.email?.trim().toLowerCase() === SUPER_ADMIN_EMAIL;
+  const billingState = getBusinessBillingState(profile?.businesses);
+  const isBillingBlocked = billingState.isBlocked;
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signOut, hasPermission, isAdmin, isSuperAdmin, fetchProfile }}>
+    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signOut, hasPermission, isAdmin, fetchProfile, billingState, isBillingBlocked }}>
       {children}
     </AuthContext.Provider>
   );

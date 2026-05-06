@@ -22,6 +22,11 @@ create table if not exists public.businesses (
   currency    text default 'GBP',
   logo_url    text,
   status      text default 'active',
+  billing_status text default 'trialing',
+  current_plan_id uuid,
+  subscription_started_at timestamptz,
+  subscription_expires_at timestamptz,
+  paystack_customer_code text,
   owner_name  text,
   owner_email text,
   owner_user_id uuid,
@@ -70,7 +75,8 @@ create table if not exists public.invitations (
   created_at   timestamptz default now()
 );
 
--- Super-admin generated client access tokens
+-- Legacy client access tokens kept for backward compatibility.
+-- The current app no longer uses them for new business onboarding.
 create table if not exists public.client_access_tokens (
   id               uuid primary key default uuid_generate_v4(),
   token            text unique not null,
@@ -84,6 +90,51 @@ create table if not exists public.client_access_tokens (
   expires_at       timestamptz not null default (now() + interval '30 days'),
   used_at          timestamptz,
   created_at       timestamptz default now()
+);
+
+-- Public billing plans for business subscriptions
+create table if not exists public.billing_plans (
+  id               uuid primary key default uuid_generate_v4(),
+  slug             text unique not null,
+  name             text not null,
+  description      text,
+  amount_minor     bigint not null,
+  currency         text not null default 'USD',
+  billing_days     integer not null default 30,
+  paystack_plan_code text,
+  features         jsonb not null default '[]'::jsonb,
+  is_trial         boolean not null default false,
+  is_lifetime      boolean not null default false,
+  is_active        boolean not null default true,
+  sort_order       integer not null default 0,
+  created_at       timestamptz default now(),
+  updated_at       timestamptz default now()
+);
+
+-- Tracks Paystack checkout sessions for business signup and renewals
+create table if not exists public.billing_checkouts (
+  id               uuid primary key default uuid_generate_v4(),
+  business_id      uuid references public.businesses(id) on delete cascade,
+  plan_id          uuid not null references public.billing_plans(id) on delete restrict,
+  intent           text not null default 'signup' check (intent in ('signup','renewal','upgrade')),
+  email            text not null,
+  full_name        text,
+  business_name    text,
+  reference        text unique not null,
+  status           text not null default 'initialized' check (status in ('initialized','pending','paid','failed','expired','consumed','abandoned')),
+  amount_minor     bigint not null,
+  currency         text not null default 'USD',
+  paystack_access_code text,
+  paystack_authorization_url text,
+  paystack_transaction_id bigint,
+  paystack_customer_code text,
+  raw_initialize_response jsonb,
+  raw_verify_response jsonb,
+  metadata         jsonb not null default '{}'::jsonb,
+  paid_at          timestamptz,
+  consumed_at      timestamptz,
+  created_at       timestamptz default now(),
+  updated_at       timestamptz default now()
 );
 
 -- Business-owned payment settings
@@ -249,12 +300,21 @@ create table if not exists public.notifications (
 -- 3. ALIGN EXISTING PROJECTS
 -- ============================================================
 alter table public.businesses alter column currency set default 'KES';
+alter table public.billing_plans alter column currency set default 'USD';
+alter table public.billing_checkouts alter column currency set default 'USD';
 alter table public.businesses add column if not exists status text default 'active';
 alter table public.businesses add column if not exists display_name text;
+alter table public.businesses add column if not exists billing_status text default 'trialing';
+alter table public.businesses add column if not exists current_plan_id uuid;
+alter table public.businesses add column if not exists subscription_started_at timestamptz;
+alter table public.businesses add column if not exists subscription_expires_at timestamptz;
+alter table public.businesses add column if not exists paystack_customer_code text;
 alter table public.businesses add column if not exists owner_name text;
 alter table public.businesses add column if not exists owner_email text;
 alter table public.businesses add column if not exists owner_user_id uuid;
 alter table public.businesses add column if not exists created_by uuid;
+alter table public.billing_plans add column if not exists is_trial boolean not null default false;
+alter table public.billing_plans add column if not exists is_lifetime boolean not null default false;
 alter table public.profiles add column if not exists is_super_admin boolean default false;
 alter table public.invitations add column if not exists status text default 'pending';
 alter table public.sales add column if not exists status text default 'completed';
@@ -265,8 +325,22 @@ set status = 'active'
 where status is null;
 
 update public.businesses
+set billing_status = 'active'
+where billing_status is null;
+
+alter table public.businesses alter column billing_status set default 'trialing';
+
+update public.businesses
 set display_name = trim(coalesce(name, ''))
 where display_name is null or trim(display_name) = '';
+
+update public.businesses
+set subscription_started_at = coalesce(subscription_started_at, now())
+where subscription_started_at is null;
+
+update public.businesses
+set subscription_expires_at = coalesce(subscription_expires_at, now() + interval '90 days')
+where subscription_expires_at is null;
 
 update public.profiles
 set is_super_admin = false
@@ -292,6 +366,22 @@ begin
     alter table public.businesses
       add constraint businesses_status_check
       check (status in ('active','suspended'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'businesses_billing_status_check'
+  ) then
+    alter table public.businesses
+      add constraint businesses_billing_status_check
+      check (billing_status in ('trialing','active','past_due','suspended'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'businesses_current_plan_id_fkey'
+  ) then
+    alter table public.businesses
+      add constraint businesses_current_plan_id_fkey
+      foreign key (current_plan_id) references public.billing_plans(id) on delete set null;
   end if;
 
   if not exists (
@@ -346,8 +436,12 @@ create index if not exists idx_profiles_business    on public.profiles(business_
 create index if not exists idx_invitations_token    on public.invitations(token);
 create index if not exists idx_invitations_email    on public.invitations(email);
 create index if not exists idx_businesses_status    on public.businesses(status);
+create index if not exists idx_businesses_billing_status on public.businesses(billing_status, subscription_expires_at);
 create index if not exists idx_access_tokens_status on public.client_access_tokens(status);
 create index if not exists idx_access_tokens_token  on public.client_access_tokens(token);
+create index if not exists idx_billing_plans_active on public.billing_plans(is_active, sort_order);
+create index if not exists idx_billing_checkouts_reference on public.billing_checkouts(reference);
+create index if not exists idx_billing_checkouts_business on public.billing_checkouts(business_id, status, created_at desc);
 create index if not exists idx_payment_settings_business on public.business_payment_settings(business_id);
 
 -- ============================================================
@@ -403,23 +497,23 @@ declare
   v_admin_role_id uuid;
 begin
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'admin',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":true,"manage_staff":true,"invite_staff":true,"view_profits":true,"manage_categories":true,"manage_payments":true}'
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":true,"manage_staff":true,"invite_staff":true,"view_profits":true,"manage_categories":true,"manage_payments":true,"manage_billing":true}'
   ) returning id into v_admin_role_id;
 
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'sales_manager',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false,"manage_payments":false}'
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":true,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false,"manage_payments":false,"manage_billing":false}'
   );
 
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'cashier',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":false,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":false,"manage_payments":false}'
+    '{"view_dashboard":true,"view_sales":true,"create_sale":true,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":false,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":false,"manage_payments":false,"manage_billing":false}'
   );
 
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'stock_manager',
-    '{"view_dashboard":true,"view_sales":false,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":true,"manage_payments":false}'
+    '{"view_dashboard":true,"view_sales":false,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":true,"edit_stock":true,"delete_stock":true,"view_reports":true,"export_reports":false,"manage_staff":false,"invite_staff":false,"view_profits":false,"manage_categories":true,"manage_payments":false,"manage_billing":false}'
   );
 
   insert into public.roles(business_id, name, permissions) values (p_business_id, 'accountant',
-    '{"view_dashboard":true,"view_sales":true,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false,"manage_payments":false}'
+    '{"view_dashboard":true,"view_sales":true,"create_sale":false,"void_sale":false,"view_stock":true,"add_stock":false,"edit_stock":false,"delete_stock":false,"view_reports":true,"export_reports":true,"manage_staff":false,"invite_staff":false,"view_profits":true,"manage_categories":false,"manage_payments":false,"manage_billing":false}'
   );
 
   return v_admin_role_id;
@@ -432,9 +526,19 @@ where name = 'admin'
   and coalesce((permissions->>'manage_payments')::boolean, false) = false;
 
 update public.roles
+set permissions = coalesce(permissions, '{}'::jsonb) || jsonb_build_object('manage_billing', true)
+where name = 'admin'
+  and coalesce((permissions->>'manage_billing')::boolean, false) = false;
+
+update public.roles
 set permissions = coalesce(permissions, '{}'::jsonb) || jsonb_build_object('manage_payments', false)
 where name in ('sales_manager', 'cashier', 'stock_manager', 'accountant')
   and not (coalesce(permissions, '{}'::jsonb) ? 'manage_payments');
+
+update public.roles
+set permissions = coalesce(permissions, '{}'::jsonb) || jsonb_build_object('manage_billing', false)
+where name in ('sales_manager', 'cashier', 'stock_manager', 'accountant')
+  and not (coalesce(permissions, '{}'::jsonb) ? 'manage_billing');
 
 create or replace function public.create_default_categories(p_business_id uuid)
 returns void
@@ -449,6 +553,667 @@ begin
     (p_business_id, 'Electronics',    '#F59F00', 'phone-portrait'),
     (p_business_id, 'Clothing',       '#E64980', 'shirt'),
     (p_business_id, 'Health & Beauty','#7950F2', 'heart');
+end;
+$$;
+
+insert into public.billing_plans(slug, name, description, amount_minor, currency, billing_days, features, is_trial, is_lifetime, is_active, sort_order)
+values
+  (
+    'free-trial',
+    'Free Trial',
+    'Automatic 7-day trial for every new business that signs up.',
+    0,
+    'USD',
+    7,
+    '["Full BizFlow access for 7 days","Sales, stock and reports","Unlimited staff invites","Upgrade later from inside the app"]'::jsonb,
+    true,
+    false,
+    true,
+    0
+  ),
+  (
+    'beta',
+    'Beta',
+    'Monthly BizFlow access after the free trial ends.',
+    700,
+    'USD',
+    30,
+    '["1 business workspace","Unlimited staff invites","Sales, stock and reports","Offline sales sync"]'::jsonb,
+    false,
+    false,
+    true,
+    10
+  ),
+  (
+    'lifetime',
+    'Lifetime',
+    'One-time BizFlow purchase for permanent business access.',
+    10000,
+    'USD',
+    36500,
+    '["One-time payment","Permanent business access","Unlimited staff invites","Sales, stock, reports and offline sync"]'::jsonb,
+    false,
+    true,
+    true,
+    20
+  )
+on conflict (slug) do update
+set
+  name = excluded.name,
+  description = excluded.description,
+  amount_minor = excluded.amount_minor,
+  currency = excluded.currency,
+  billing_days = excluded.billing_days,
+  features = excluded.features,
+  is_trial = excluded.is_trial,
+  is_lifetime = excluded.is_lifetime,
+  is_active = excluded.is_active,
+  sort_order = excluded.sort_order,
+  updated_at = now();
+
+update public.billing_plans
+set is_active = false,
+    updated_at = now()
+where slug in ('starter', 'growth', 'scale');
+
+create or replace function public.business_subscription_is_active(p_business_id uuid default public.my_business_id())
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business record;
+begin
+  if p_business_id is null then
+    return false;
+  end if;
+
+  select status, billing_status, subscription_expires_at
+  into v_business
+  from public.businesses
+  where id = p_business_id;
+
+  if not found then
+    return false;
+  end if;
+
+  if v_business.status <> 'active' then
+    return false;
+  end if;
+
+  if coalesce(v_business.billing_status, 'active') not in ('trialing', 'active') then
+    return false;
+  end if;
+
+  if v_business.subscription_expires_at is null then
+    return true;
+  end if;
+
+  return v_business.subscription_expires_at >= now();
+end;
+$$;
+
+create or replace function public.get_business_billing_summary()
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_business record;
+  v_last_checkout record;
+  v_effective_status text;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.has_permission('manage_billing') then
+    raise exception 'You do not have permission to manage billing';
+  end if;
+
+  select
+    b.id,
+    b.name,
+    b.display_name,
+    b.status,
+    b.billing_status,
+    b.current_plan_id,
+    b.subscription_started_at,
+    b.subscription_expires_at,
+    b.owner_email,
+    b.paystack_customer_code,
+    p.slug as plan_slug,
+    p.name as plan_name,
+    p.description as plan_description,
+    p.amount_minor as plan_amount_minor,
+    p.currency as plan_currency,
+    p.billing_days as plan_billing_days,
+    p.is_trial as plan_is_trial,
+    p.is_lifetime as plan_is_lifetime,
+    p.features as plan_features
+  into v_business
+  from public.businesses b
+  left join public.billing_plans p on p.id = b.current_plan_id
+  where b.id = public.my_business_id();
+
+  if not found then
+    return json_build_object(
+      'success', false,
+      'error', 'Business not found'
+    );
+  end if;
+
+  select
+    reference,
+    status,
+    amount_minor,
+    currency,
+    intent,
+    paystack_authorization_url,
+    created_at,
+    paid_at
+  into v_last_checkout
+  from public.billing_checkouts
+  where business_id = v_business.id
+  order by created_at desc
+  limit 1;
+
+  v_effective_status := coalesce(v_business.billing_status, 'active');
+  if v_business.subscription_expires_at is not null
+    and v_business.subscription_expires_at < now()
+    and v_effective_status in ('trialing', 'active') then
+    v_effective_status := 'past_due';
+  end if;
+
+  return json_build_object(
+    'success', true,
+    'business_id', v_business.id,
+    'business_name', coalesce(v_business.display_name, v_business.name),
+    'status', v_business.status,
+    'billing_status', v_effective_status,
+    'is_access_active', public.business_subscription_is_active(v_business.id),
+    'subscription_started_at', v_business.subscription_started_at,
+    'subscription_expires_at', v_business.subscription_expires_at,
+    'owner_email', v_business.owner_email,
+    'paystack_customer_code', v_business.paystack_customer_code,
+    'current_plan', case
+      when v_business.current_plan_id is null then null
+      else json_build_object(
+        'id', v_business.current_plan_id,
+        'slug', v_business.plan_slug,
+        'name', v_business.plan_name,
+        'description', v_business.plan_description,
+        'amount_minor', v_business.plan_amount_minor,
+        'currency', v_business.plan_currency,
+        'billing_days', v_business.plan_billing_days,
+        'is_trial', coalesce(v_business.plan_is_trial, false),
+        'is_lifetime', coalesce(v_business.plan_is_lifetime, false),
+        'features', coalesce(v_business.plan_features, '[]'::jsonb)
+      )
+    end,
+    'last_checkout', case
+      when v_last_checkout.reference is null then null
+      else json_build_object(
+        'reference', v_last_checkout.reference,
+        'status', v_last_checkout.status,
+        'amount_minor', v_last_checkout.amount_minor,
+        'currency', v_last_checkout.currency,
+        'intent', v_last_checkout.intent,
+        'authorization_url', v_last_checkout.paystack_authorization_url,
+        'created_at', v_last_checkout.created_at,
+        'paid_at', v_last_checkout.paid_at
+      )
+    end
+  );
+end;
+$$;
+
+create or replace function public.get_platform_onboarding_summary()
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_owner_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if v_owner_email <> 'revivalthuranira@gmail.com' then
+    raise exception 'You do not have access to platform onboarding data';
+  end if;
+
+  return json_build_object(
+    'success', true,
+    'total_businesses', (select count(*) from public.businesses where owner_email is not null),
+    'active_businesses', (
+      select count(*)
+      from public.businesses
+      where owner_email is not null
+        and coalesce(billing_status, 'trialing') = 'active'
+    ),
+    'trial_businesses', (
+      select count(*)
+      from public.businesses
+      where owner_email is not null
+        and coalesce(billing_status, 'trialing') = 'trialing'
+    ),
+    'onboarded', coalesce(
+      (
+        select json_agg(
+          json_build_object(
+            'business_id', b.id,
+            'business_name', coalesce(b.display_name, b.name),
+            'owner_name', b.owner_name,
+            'owner_email', b.owner_email,
+            'billing_status', coalesce(
+              case
+                when b.subscription_expires_at is not null
+                  and b.subscription_expires_at < now()
+                  and coalesce(b.billing_status, 'trialing') in ('trialing', 'active')
+                then 'past_due'
+                else b.billing_status
+              end,
+              'trialing'
+            ),
+            'plan_name', p.name,
+            'subscription_expires_at', b.subscription_expires_at,
+            'created_at', b.created_at
+          )
+          order by b.created_at desc
+        )
+        from public.businesses b
+        left join public.billing_plans p on p.id = b.current_plan_id
+        where b.owner_email is not null
+      ),
+      '[]'::json
+    )
+  );
+end;
+$$;
+
+create or replace function public.finalize_billing_checkout(
+  p_reference text,
+  p_paystack_transaction_id bigint default null,
+  p_paystack_customer_code text default null,
+  p_payload jsonb default '{}'::jsonb
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_checkout public.billing_checkouts%rowtype;
+  v_plan public.billing_plans%rowtype;
+  v_effective_start timestamptz;
+  v_new_expiry timestamptz;
+begin
+  select *
+  into v_checkout
+  from public.billing_checkouts
+  where reference = trim(coalesce(p_reference, ''))
+  for update;
+
+  if not found then
+    return json_build_object(
+      'success', false,
+      'error', 'Billing checkout not found'
+    );
+  end if;
+
+  select *
+  into v_plan
+  from public.billing_plans
+  where id = v_checkout.plan_id;
+
+  if not found then
+    return json_build_object(
+      'success', false,
+      'error', 'Billing plan not found'
+    );
+  end if;
+
+  if v_checkout.intent = 'signup' and v_checkout.status in ('paid', 'consumed') then
+    return json_build_object(
+      'success', true,
+      'reference', v_checkout.reference,
+      'status', v_checkout.status,
+      'requires_registration', v_checkout.status = 'paid'
+    );
+  end if;
+
+  if v_checkout.intent in ('renewal', 'upgrade') and v_checkout.status = 'consumed' then
+    return json_build_object(
+      'success', true,
+      'reference', v_checkout.reference,
+      'status', 'consumed',
+      'business_id', v_checkout.business_id
+    );
+  end if;
+
+  update public.billing_checkouts
+  set
+    status = case when v_checkout.intent = 'signup' then 'paid' else 'consumed' end,
+    paid_at = coalesce(v_checkout.paid_at, now()),
+    consumed_at = case when v_checkout.intent = 'signup' then v_checkout.consumed_at else coalesce(v_checkout.consumed_at, now()) end,
+    paystack_transaction_id = coalesce(p_paystack_transaction_id, v_checkout.paystack_transaction_id),
+    paystack_customer_code = coalesce(nullif(trim(coalesce(p_paystack_customer_code, '')), ''), v_checkout.paystack_customer_code),
+    raw_verify_response = coalesce(p_payload, '{}'::jsonb),
+    updated_at = now()
+  where id = v_checkout.id
+  returning * into v_checkout;
+
+  if v_checkout.intent in ('renewal', 'upgrade') and v_checkout.business_id is not null then
+    select greatest(coalesce(subscription_expires_at, now()), now())
+    into v_effective_start
+    from public.businesses
+    where id = v_checkout.business_id
+    for update;
+
+    if coalesce(v_plan.is_lifetime, false) then
+      v_new_expiry := '2999-12-31 23:59:59+00'::timestamptz;
+    else
+      v_new_expiry := v_effective_start + make_interval(days => coalesce(v_plan.billing_days, 30));
+    end if;
+
+    update public.businesses
+    set
+      billing_status = 'active',
+      current_plan_id = v_plan.id,
+      subscription_started_at = coalesce(subscription_started_at, now()),
+      subscription_expires_at = v_new_expiry,
+      paystack_customer_code = coalesce(nullif(trim(coalesce(p_paystack_customer_code, '')), ''), paystack_customer_code),
+      updated_at = now()
+    where id = v_checkout.business_id;
+
+    return json_build_object(
+      'success', true,
+      'reference', v_checkout.reference,
+      'status', 'consumed',
+      'business_id', v_checkout.business_id,
+      'subscription_expires_at', v_new_expiry
+    );
+  end if;
+
+  return json_build_object(
+    'success', true,
+    'reference', v_checkout.reference,
+    'status', v_checkout.status,
+    'requires_registration', v_checkout.intent = 'signup'
+  );
+end;
+$$;
+
+create or replace function public.register_admin_with_billing_checkout(
+  p_reference text,
+  p_user_id uuid,
+  p_email text,
+  p_full_name text,
+  p_business_name text default null
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_checkout public.billing_checkouts%rowtype;
+  v_plan public.billing_plans%rowtype;
+  v_business_id uuid;
+  v_role_id uuid;
+  v_full_name text := nullif(trim(coalesce(p_full_name, '')), '');
+  v_email text := lower(trim(coalesce(p_email, '')));
+  v_business_name text;
+  v_started_at timestamptz;
+  v_expires_at timestamptz;
+begin
+  if p_user_id is null then
+    return json_build_object('success', false, 'error', 'Missing user id');
+  end if;
+
+  if v_full_name is null then
+    return json_build_object('success', false, 'error', 'Full name is required');
+  end if;
+
+  if v_email = '' then
+    return json_build_object('success', false, 'error', 'Email is required');
+  end if;
+
+  if exists (select 1 from public.profiles where id = p_user_id) then
+    return json_build_object('success', false, 'error', 'This user already has a BizFlow profile');
+  end if;
+
+  select *
+  into v_checkout
+  from public.billing_checkouts
+  where reference = trim(coalesce(p_reference, ''))
+  for update;
+
+  if not found then
+    return json_build_object('success', false, 'error', 'Billing checkout not found');
+  end if;
+
+  if v_checkout.intent <> 'signup' then
+    return json_build_object('success', false, 'error', 'This checkout is not for a new business signup');
+  end if;
+
+  if v_checkout.status <> 'paid' then
+    return json_build_object('success', false, 'error', 'Complete Paystack payment before creating the business account');
+  end if;
+
+  if lower(trim(coalesce(v_checkout.email, ''))) <> v_email then
+    return json_build_object('success', false, 'error', 'This payment belongs to a different email address');
+  end if;
+
+  if v_checkout.business_id is not null or v_checkout.consumed_at is not null then
+    return json_build_object('success', false, 'error', 'This billing checkout has already been used');
+  end if;
+
+  select *
+  into v_plan
+  from public.billing_plans
+  where id = v_checkout.plan_id;
+
+  if not found then
+    return json_build_object('success', false, 'error', 'Billing plan not found');
+  end if;
+
+  v_business_name := coalesce(
+    nullif(trim(coalesce(p_business_name, '')), ''),
+    nullif(trim(coalesce(v_checkout.business_name, '')), ''),
+    v_full_name || '''s Business'
+  );
+
+  v_started_at := coalesce(v_checkout.paid_at, now());
+  v_expires_at := v_started_at + make_interval(days => coalesce(v_plan.billing_days, 30));
+
+  insert into public.businesses(
+    name,
+    display_name,
+    email,
+    status,
+    billing_status,
+    current_plan_id,
+    subscription_started_at,
+    subscription_expires_at,
+    paystack_customer_code,
+    owner_name,
+    owner_email,
+    owner_user_id,
+    created_by
+  ) values (
+    v_business_name,
+    v_business_name,
+    v_email,
+    'active',
+    'active',
+    v_plan.id,
+    v_started_at,
+    v_expires_at,
+    v_checkout.paystack_customer_code,
+    v_full_name,
+    v_email,
+    p_user_id,
+    p_user_id
+  )
+  returning id into v_business_id;
+
+  v_role_id := public.create_default_roles(v_business_id);
+
+  insert into public.profiles(
+    id,
+    business_id,
+    role_id,
+    email,
+    full_name,
+    status,
+    is_super_admin
+  ) values (
+    p_user_id,
+    v_business_id,
+    v_role_id,
+    v_email,
+    v_full_name,
+    'active',
+    false
+  );
+
+  perform public.create_default_categories(v_business_id);
+
+  update public.billing_checkouts
+  set
+    business_id = v_business_id,
+    status = 'consumed',
+    consumed_at = now(),
+    updated_at = now()
+  where id = v_checkout.id;
+
+  return json_build_object(
+    'success', true,
+    'business_id', v_business_id,
+    'role_id', v_role_id,
+    'subscription_expires_at', v_expires_at
+  );
+end;
+$$;
+
+create or replace function public.register_business_on_trial(
+  p_user_id uuid,
+  p_email text,
+  p_full_name text,
+  p_business_name text
+)
+returns json
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text := lower(trim(coalesce(p_email, '')));
+  v_full_name text := nullif(trim(coalesce(p_full_name, '')), '');
+  v_business_name text := nullif(trim(coalesce(p_business_name, '')), '');
+  v_business_id uuid;
+  v_role_id uuid;
+  v_trial_plan_id uuid;
+  v_started_at timestamptz := now();
+  v_expires_at timestamptz := now() + interval '7 days';
+begin
+  if p_user_id is null then
+    return json_build_object('success', false, 'error', 'Missing user id');
+  end if;
+
+  if v_email = '' then
+    return json_build_object('success', false, 'error', 'Email is required');
+  end if;
+
+  if v_full_name is null then
+    return json_build_object('success', false, 'error', 'Full name is required');
+  end if;
+
+  if v_business_name is null then
+    return json_build_object('success', false, 'error', 'Business name is required');
+  end if;
+
+  if exists (select 1 from public.profiles where id = p_user_id) then
+    return json_build_object('success', false, 'error', 'This user already has a BizFlow profile');
+  end if;
+
+  if exists (select 1 from public.businesses where lower(coalesce(owner_email, '')) = v_email) then
+    return json_build_object('success', false, 'error', 'This email already owns a BizFlow business');
+  end if;
+
+  select id
+  into v_trial_plan_id
+  from public.billing_plans
+  where slug = 'free-trial'
+  limit 1;
+
+  if v_trial_plan_id is null then
+    return json_build_object('success', false, 'error', 'Free trial billing plan is not configured');
+  end if;
+
+  insert into public.businesses(
+    name,
+    display_name,
+    email,
+    status,
+    billing_status,
+    current_plan_id,
+    subscription_started_at,
+    subscription_expires_at,
+    owner_name,
+    owner_email,
+    owner_user_id,
+    created_by
+  ) values (
+    v_business_name,
+    v_business_name,
+    v_email,
+    'active',
+    'trialing',
+    v_trial_plan_id,
+    v_started_at,
+    v_expires_at,
+    v_full_name,
+    v_email,
+    p_user_id,
+    p_user_id
+  )
+  returning id into v_business_id;
+
+  v_role_id := public.create_default_roles(v_business_id);
+
+  insert into public.profiles(
+    id,
+    business_id,
+    role_id,
+    email,
+    full_name,
+    status,
+    is_super_admin
+  ) values (
+    p_user_id,
+    v_business_id,
+    v_role_id,
+    v_email,
+    v_full_name,
+    'active',
+    false
+  );
+
+  perform public.create_default_categories(v_business_id);
+
+  return json_build_object(
+    'success', true,
+    'business_id', v_business_id,
+    'role_id', v_role_id,
+    'trial_expires_at', v_expires_at
+  );
 end;
 $$;
 
@@ -986,6 +1751,8 @@ alter table public.roles            enable row level security;
 alter table public.profiles         enable row level security;
 alter table public.invitations      enable row level security;
 alter table public.client_access_tokens enable row level security;
+alter table public.billing_plans    enable row level security;
+alter table public.billing_checkouts enable row level security;
 alter table public.business_payment_settings enable row level security;
 alter table public.categories       enable row level security;
 alter table public.products         enable row level security;
@@ -1006,12 +1773,12 @@ end $$;
 
 -- BUSINESSES
 create policy "businesses_select" on public.businesses
-  for select using (id = public.my_business_id() or public.is_super_admin());
+  for select using (id = public.my_business_id());
 
 create policy "businesses_update" on public.businesses
   for update using (
-    (id = public.my_business_id() and public.my_role() = 'admin')
-    or public.is_super_admin()
+    id = public.my_business_id()
+    and public.my_role() = 'admin'
   );
 
 -- ROLES
@@ -1037,6 +1804,7 @@ create policy "invitations_insert" on public.invitations
   for insert with check (
     business_id = public.my_business_id()
     and public.has_permission('invite_staff')
+    and public.business_subscription_is_active(business_id)
   );
 
 create policy "invitations_update" on public.invitations
@@ -1048,6 +1816,17 @@ create policy "client_access_tokens_select" on public.client_access_tokens
 
 create policy "client_access_tokens_update" on public.client_access_tokens
   for update using (public.is_super_admin());
+
+-- BILLING PLANS
+create policy "billing_plans_select" on public.billing_plans
+  for select using (is_active = true);
+
+-- BILLING CHECKOUTS
+create policy "billing_checkouts_select" on public.billing_checkouts
+  for select using (
+    business_id = public.my_business_id()
+    and public.has_permission('manage_billing')
+  );
 
 -- BUSINESS PAYMENT SETTINGS
 create policy "business_payment_settings_select" on public.business_payment_settings
@@ -1293,6 +2072,10 @@ begin
     raise exception 'You do not have permission to create sales';
   end if;
 
+  if not public.business_subscription_is_active(p_business_id) then
+    raise exception 'This business subscription is not active. Renew billing before creating new sales.';
+  end if;
+
   if p_items is null or jsonb_typeof(p_items) <> 'array' then
     raise exception 'Sale must include at least one item';
   end if;
@@ -1460,6 +2243,10 @@ begin
 
   if not public.has_permission('void_sale') then
     raise exception 'You do not have permission to void sales';
+  end if;
+
+  if not public.business_subscription_is_active(public.my_business_id()) then
+    raise exception 'This business subscription is not active. Renew billing before voiding sales.';
   end if;
 
   begin
@@ -1865,6 +2652,20 @@ begin
 
     if not exists (
       select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'billing_plans'
+    ) then
+      alter publication supabase_realtime add table public.billing_plans;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'billing_checkouts'
+    ) then
+      alter publication supabase_realtime add table public.billing_checkouts;
+    end if;
+
+    if not exists (
+      select 1 from pg_publication_tables
       where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'business_payment_settings'
     ) then
       alter publication supabase_realtime add table public.business_payment_settings;
@@ -1895,8 +2696,8 @@ declare
   v_biz_id   uuid;
   v_role_id  uuid;
 begin
-  if current_setting('request.jwt.claim.role', true) is not null and not public.is_super_admin() then
-    return json_build_object('error', 'Only SQL editor or super admin can run bootstrap_admin');
+  if current_setting('request.jwt.claim.role', true) is not null then
+    return json_build_object('error', 'Only the SQL editor can run bootstrap_admin');
   end if;
 
   -- Guard: don't run if user already has a profile
@@ -1905,8 +2706,32 @@ begin
   end if;
 
   -- Create business
-  insert into public.businesses(name, display_name, email, status, owner_name, owner_email, owner_user_id, created_by)
-  values (p_biz_name, p_biz_name, p_email, 'active', p_full_name, p_email, p_user_id, p_user_id)
+  insert into public.businesses(
+    name,
+    display_name,
+    email,
+    status,
+    billing_status,
+    subscription_started_at,
+    subscription_expires_at,
+    owner_name,
+    owner_email,
+    owner_user_id,
+    created_by
+  )
+  values (
+    p_biz_name,
+    p_biz_name,
+    p_email,
+    'active',
+    'active',
+    now(),
+    now() + interval '30 days',
+    p_full_name,
+    p_email,
+    p_user_id,
+    p_user_id
+  )
   returning id into v_biz_id;
 
   v_role_id := public.create_default_roles(v_biz_id);
@@ -1937,9 +2762,15 @@ revoke execute on function public.create_default_categories(uuid) from anon, aut
 revoke execute on function public.bootstrap_admin(uuid, text, text, text) from anon, authenticated;
 revoke execute on function public.promote_super_admin(uuid) from anon, authenticated;
 revoke execute on function public.complete_mpesa_sale_from_intent(uuid) from anon, authenticated;
+revoke execute on function public.finalize_billing_checkout(text, bigint, text, jsonb) from anon, authenticated;
 grant execute on function public.register_admin_with_access_token(text, uuid, text, text, text) to anon, authenticated;
 grant execute on function public.verify_client_access_token(text) to anon, authenticated;
 grant execute on function public.generate_client_access_token(text, text, text) to authenticated;
+grant execute on function public.get_business_billing_summary() to authenticated;
+grant execute on function public.get_platform_onboarding_summary() to authenticated;
+grant execute on function public.register_business_on_trial(uuid, text, text, text) to anon, authenticated;
+grant execute on function public.register_admin_with_billing_checkout(text, uuid, text, text, text) to anon, authenticated;
+grant execute on function public.finalize_billing_checkout(text, bigint, text, jsonb) to service_role;
 
 -- ============================================================
 -- ALL DONE. Next: follow the setup guide.

@@ -7,50 +7,48 @@ import { isSupabaseConfigured, supabase } from '../../utils/supabase';
 import { COLORS } from '../../utils/constants';
 import { Ionicons } from '@expo/vector-icons';
 import { humanizeLabel } from '../../utils/data';
+import { formatBillingAmount } from '../../utils/billing';
 
 export default function RegisterScreen({ navigation, route }) {
+  const [mode, setMode] = useState(route?.params?.token ? 'staff' : 'business');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [businessName, setBusinessName] = useState('');
-  const [tokenInput, setTokenInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [credentialType, setCredentialType] = useState(null);
+  const [inviteToken, setInviteToken] = useState('');
   const [inviteData, setInviteData] = useState(null);
-  const [clientTokenData, setClientTokenData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [verifyingInvite, setVerifyingInvite] = useState(false);
 
   useEffect(() => {
     const token = route?.params?.token;
     if (token) {
-      setTokenInput(token);
-      verifyCredential(token);
+      setMode('staff');
+      setInviteToken(token);
+      verifyInvite(token);
     }
   }, [route?.params?.token]);
 
-  const resetVerification = () => {
-    setCredentialType(null);
+  const resetInviteVerification = () => {
     setInviteData(null);
-    setClientTokenData(null);
     setEmail('');
-    setBusinessName('');
   };
 
-  const verifyCredential = async (inputToken = tokenInput) => {
+  const verifyInvite = async (inputToken = inviteToken) => {
     if (!isSupabaseConfigured) {
-      Alert.alert('Setup Required', 'Add your Supabase URL and anon key before verifying access.');
+      Alert.alert('Setup Required', 'Add your Supabase URL and anon key before verifying invites.');
       navigation.replace('Login');
       return;
     }
 
     const normalizedToken = inputToken.trim();
     if (!normalizedToken) {
-      Alert.alert('Token Required', 'Enter a valid access token or invitation token.');
+      Alert.alert('Invite Required', 'Enter a valid invitation token.');
       return;
     }
 
-    setVerifying(true);
+    setVerifyingInvite(true);
 
     try {
       const { data: pendingInvite, error: inviteError } = await supabase
@@ -61,49 +59,56 @@ export default function RegisterScreen({ navigation, route }) {
         .limit(1)
         .maybeSingle();
 
-      if (!inviteError && pendingInvite) {
-        const expiry = new Date(pendingInvite.created_at);
-        expiry.setHours(expiry.getHours() + 48);
+      if (inviteError || !pendingInvite) {
+        throw inviteError || new Error('Invite not found');
+      }
 
-        if (new Date() > expiry) {
-          Alert.alert('Expired Invite', 'This staff invitation has expired. Ask the business admin for a new one.');
-          resetVerification();
-          return;
-        }
+      const expiry = new Date(pendingInvite.created_at);
+      expiry.setHours(expiry.getHours() + 48);
 
-        setCredentialType('invite');
-        setInviteData(pendingInvite);
-        setClientTokenData(null);
-        setEmail(pendingInvite.email || '');
-        setBusinessName('');
+      if (new Date() > expiry) {
+        Alert.alert('Expired Invite', 'This staff invitation has expired. Ask the business admin for a new one.');
+        resetInviteVerification();
         return;
       }
 
-      const { data: tokenData, error: tokenError } = await supabase.rpc('verify_client_access_token', {
-        p_token: normalizedToken,
-      });
-
-      if (tokenError) {
-        throw tokenError;
-      }
-
-      if (!tokenData?.success) {
-        Alert.alert('Invalid Token', tokenData?.error || 'This token is invalid or no longer active.');
-        resetVerification();
-        return;
-      }
-
-      setCredentialType('access');
-      setClientTokenData(tokenData);
-      setInviteData(null);
-      setEmail(tokenData.admin_email || '');
-      setBusinessName(tokenData.business_name || '');
+      setInviteData(pendingInvite);
+      setEmail(pendingInvite.email || '');
     } catch (_error) {
-      Alert.alert('Access Denied', 'We could not verify this token. Check it and try again.');
-      resetVerification();
+      Alert.alert('Invite Invalid', 'We could not verify this invite token. Check it and try again.');
+      resetInviteVerification();
     } finally {
-      setVerifying(false);
+      setVerifyingInvite(false);
     }
+  };
+
+  const validateCommonFields = ({ requireBusinessName = false } = {}) => {
+    if (!name.trim()) {
+      Alert.alert('Error', 'Please enter your full name.');
+      return false;
+    }
+
+    if (!email.trim()) {
+      Alert.alert('Error', 'Please enter your email address.');
+      return false;
+    }
+
+    if (requireBusinessName && !businessName.trim()) {
+      Alert.alert('Error', 'Please enter the business name.');
+      return false;
+    }
+
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters.');
+      return false;
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match.');
+      return false;
+    }
+
+    return true;
   };
 
   const handleRegister = async () => {
@@ -112,33 +117,16 @@ export default function RegisterScreen({ navigation, route }) {
       return;
     }
 
-    if (!credentialType) {
-      Alert.alert('Approval Required', 'Verify a valid access token or staff invitation first.');
-      return;
-    }
+    if (mode === 'staff') {
+      if (!inviteData) {
+        Alert.alert('Invite Required', 'Verify a staff invitation token first.');
+        return;
+      }
 
-    if (!name.trim()) {
-      Alert.alert('Error', 'Please enter your full name');
-      return;
-    }
-
-    if (!email.trim()) {
-      Alert.alert('Error', 'Please enter your email address');
-      return;
-    }
-
-    if (credentialType === 'access' && !businessName.trim()) {
-      Alert.alert('Error', 'Please enter the business name for this client account.');
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      if (!validateCommonFields()) {
+        return;
+      }
+    } else if (!validateCommonFields({ requireBusinessName: true })) {
       return;
     }
 
@@ -163,7 +151,7 @@ export default function RegisterScreen({ navigation, route }) {
         throw new Error('User creation failed.');
       }
 
-      if (credentialType === 'invite') {
+      if (mode === 'staff') {
         const { error: profileError } = await supabase
           .from('profiles')
           .insert({
@@ -187,7 +175,7 @@ export default function RegisterScreen({ navigation, route }) {
             accepted_at: new Date().toISOString(),
             accepted_by: userId,
           })
-          .eq('token', tokenInput.trim());
+          .eq('token', inviteToken.trim());
 
         if (inviteUpdateError) {
           throw inviteUpdateError;
@@ -197,13 +185,12 @@ export default function RegisterScreen({ navigation, route }) {
         Alert.alert(
           'Welcome!',
           `You've joined successfully as ${humanizeLabel(inviteData.roles?.name || '')}. Please sign in.`,
-          [{ text: 'Sign In', onPress: () => navigation.replace('Login') }]
+          [{ text: 'Sign In', onPress: () => navigation.replace('Login') }],
         );
         return;
       }
 
-      const { data: registerData, error: registerError } = await supabase.rpc('register_admin_with_access_token', {
-        p_token: tokenInput.trim(),
+      const { data: registerData, error: registerError } = await supabase.rpc('register_business_on_trial', {
         p_user_id: userId,
         p_email: normalizedEmail,
         p_full_name: name.trim(),
@@ -215,117 +202,165 @@ export default function RegisterScreen({ navigation, route }) {
       }
 
       if (!registerData?.success) {
-        throw new Error(registerData?.error || 'This access token could not create the business account.');
+        throw new Error(registerData?.error || 'BizFlow could not finish the business signup.');
       }
 
       await supabase.auth.signOut();
+      const expiryText = registerData?.trial_expires_at
+        ? new Date(registerData.trial_expires_at).toLocaleDateString('en-GB', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          })
+        : 'in 7 days';
+
       Alert.alert(
-        'Business Created',
-        'Your client admin account is ready. Sign in to start using BizFlow.',
-        [{ text: 'Sign In', onPress: () => navigation.replace('Login') }]
+        'Free Trial Started',
+        authData.session
+          ? `Your business account is ready with a 7-day free trial ending ${expiryText}. Sign in to start using BizFlow.`
+          : `Your business account is ready with a 7-day free trial ending ${expiryText}. If email confirmation is enabled on Supabase, confirm your email first, then sign in.`,
+        [{ text: 'Sign In', onPress: () => navigation.replace('Login') }],
       );
-    } catch (e) {
-      Alert.alert('Registration Failed', e.message);
+    } catch (error) {
+      Alert.alert('Registration Failed', error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const tokenLockedEmail = credentialType === 'invite' || Boolean(clientTokenData?.admin_email);
-
-  const renderVerificationBanner = () => {
-    if (credentialType === 'invite') {
-      return (
-        <View style={styles.inviteBanner}>
-          <Ionicons name="checkmark-circle" size={20} color={COLORS.accent} />
-          <Text style={styles.inviteText}>
-            Staff invite verified for <Text style={styles.highlight}>{humanizeLabel(inviteData?.roles?.name || '')}</Text>
-          </Text>
-        </View>
-      );
-    }
-
-    if (credentialType === 'access') {
-      return (
-        <View style={styles.inviteBanner}>
-          <Ionicons name="shield-checkmark" size={20} color={COLORS.accent} />
-          <Text style={styles.inviteText}>
-            Super-admin approval verified. This token can create one business admin account.
-          </Text>
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.warningBanner}>
-        <Ionicons name="warning" size={20} color={COLORS.warning} />
-        <Text style={styles.warningText}>
-          No one can register without a valid client token or staff invitation.
+  const renderStaffMode = () => (
+    <>
+      <View style={styles.banner}>
+        <Ionicons name="people-outline" size={20} color={COLORS.accent} />
+        <Text style={styles.bannerText}>
+          Joining an existing business? Verify the invite from your business admin, then create your account.
         </Text>
       </View>
-    );
-  };
+
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Step 1: Verify Staff Invite</Text>
+        <Text style={styles.panelText}>
+          Enter the invitation token shared by the business admin.
+        </Text>
+        <View style={styles.inputRow}>
+          <Ionicons name="mail-open-outline" size={18} color={COLORS.textLight} style={styles.inputIcon} />
+          <TextInput
+            style={styles.input}
+            placeholder="Enter invite token"
+            value={inviteToken}
+            onChangeText={(value) => {
+              setInviteToken(value);
+              if (inviteData) {
+                resetInviteVerification();
+              }
+            }}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            placeholderTextColor={COLORS.textLight}
+          />
+        </View>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => verifyInvite()} disabled={verifyingInvite}>
+          {verifyingInvite ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.actionBtnText}>{inviteData ? 'Invite Verified' : 'Verify Invite'}</Text>}
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
+  const renderBusinessMode = () => (
+    <>
+      <View style={styles.banner}>
+        <Ionicons name="rocket-outline" size={20} color={COLORS.secondary} />
+        <Text style={styles.bannerText}>
+          Start your business account normally. Every new BizFlow business gets a 7-day free trial first, then you can upgrade later from inside the app.
+        </Text>
+      </View>
+
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Your BizFlow Billing Path</Text>
+        <Text style={styles.panelText}>
+          You do not need any token to onboard a new business. Create the account first, then choose a paid plan later from Settings.
+        </Text>
+
+        {[
+          {
+            icon: 'timer-outline',
+            title: 'Free Trial',
+            price: '7 days free',
+            text: 'Every new business starts here automatically after signup.',
+            color: COLORS.warning,
+          },
+          {
+            icon: 'flash-outline',
+            title: 'Beta Plan',
+            price: `${formatBillingAmount(700, 'USD')} per 30 days`,
+            text: 'Monthly access for growing businesses after the free trial ends.',
+            color: COLORS.secondary,
+          },
+          {
+            icon: 'diamond-outline',
+            title: 'Lifetime Plan',
+            price: formatBillingAmount(10000, 'USD'),
+            text: 'One-time purchase for permanent BizFlow access.',
+            color: COLORS.accent,
+          },
+        ].map((card) => (
+          <View key={card.title} style={styles.planCard}>
+            <View style={[styles.planIcon, { backgroundColor: card.color + '18' }]}>
+              <Ionicons name={card.icon} size={18} color={card.color} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={styles.planHeader}>
+                <Text style={styles.planTitle}>{card.title}</Text>
+                <Text style={[styles.planPrice, { color: card.color }]}>{card.price}</Text>
+              </View>
+              <Text style={styles.planText}>{card.text}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </>
+  );
+
+  const emailLocked = mode === 'staff' && Boolean(inviteData?.email);
+  const canSubmit = mode === 'business' ? true : Boolean(inviteData);
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.logoArea}>
           <View style={styles.logoCircle}>
-            <Ionicons name="shield-checkmark" size={34} color={COLORS.white} />
+            <Ionicons name={mode === 'business' ? 'business' : 'people'} size={34} color={COLORS.white} />
           </View>
           <Text style={styles.appName}>BizFlow</Text>
-          <Text style={styles.subtitleTop}>Token-protected access</Text>
+          <Text style={styles.subtitleTop}>Self-serve business signup and team invites</Text>
         </View>
 
-        {renderVerificationBanner()}
-
-        <View style={styles.tokenCard}>
-          <Text style={styles.tokenCardTitle}>Step 1: Verify Access</Text>
-          <Text style={styles.tokenCardText}>
-            Enter the client token from the super admin or the invitation token from a business admin.
-          </Text>
-          <View style={styles.inputRow}>
-            <Ionicons name="key-outline" size={18} color={COLORS.textLight} style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="Enter token"
-              value={tokenInput}
-              onChangeText={(value) => {
-                setTokenInput(value);
-                if (credentialType) {
-                  resetVerification();
-                }
-              }}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              placeholderTextColor={COLORS.textLight}
-            />
-          </View>
-          <TouchableOpacity style={styles.verifyBtn} onPress={() => verifyCredential()} disabled={verifying}>
-            {verifying ? (
-              <ActivityIndicator color={COLORS.white} />
-            ) : (
-              <Text style={styles.verifyBtnText}>{credentialType ? 'Verified' : 'Verify Token'}</Text>
-            )}
+        <View style={styles.modeRow}>
+          <TouchableOpacity style={[styles.modePill, mode === 'business' && styles.modePillActive]} onPress={() => setMode('business')}>
+            <Text style={[styles.modePillText, mode === 'business' && styles.modePillTextActive]}>Start a Business</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.modePill, mode === 'staff' && styles.modePillActive]} onPress={() => setMode('staff')}>
+            <Text style={[styles.modePillText, mode === 'staff' && styles.modePillTextActive]}>Join a Team</Text>
           </TouchableOpacity>
         </View>
 
+        {mode === 'staff' ? renderStaffMode() : renderBusinessMode()}
+
         <View style={styles.card}>
           <Text style={styles.title}>
-            {credentialType === 'access' ? 'Create Client Admin Account' : 'Create Account'}
+            {mode === 'business' ? 'Create Business Account' : 'Create Staff Account'}
           </Text>
 
-          {credentialType === 'access' && (
+          {mode === 'business' && (
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Business Name</Text>
               <View style={styles.inputRow}>
                 <Ionicons name="business-outline" size={18} color={COLORS.textLight} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="Client business name"
+                  placeholder="Your business name"
                   value={businessName}
                   onChangeText={setBusinessName}
-                  editable={!clientTokenData?.business_name}
                   placeholderTextColor={COLORS.textLight}
                 />
               </View>
@@ -348,7 +383,7 @@ export default function RegisterScreen({ navigation, route }) {
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Email Address</Text>
-            <View style={[styles.inputRow, tokenLockedEmail && { backgroundColor: '#f0f0f0' }]}>
+            <View style={[styles.inputRow, emailLocked && { backgroundColor: '#f0f0f0' }]}>
               <Ionicons name="mail-outline" size={18} color={COLORS.textLight} style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
@@ -357,10 +392,10 @@ export default function RegisterScreen({ navigation, route }) {
                 onChangeText={setEmail}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                editable={!tokenLockedEmail}
+                editable={!emailLocked}
                 placeholderTextColor={COLORS.textLight}
               />
-              {tokenLockedEmail ? <Ionicons name="lock-closed" size={14} color={COLORS.textLight} /> : null}
+              {emailLocked ? <Ionicons name="lock-closed" size={14} color={COLORS.textLight} /> : null}
             </View>
           </View>
 
@@ -395,16 +430,16 @@ export default function RegisterScreen({ navigation, route }) {
           </View>
 
           <TouchableOpacity
-            style={[styles.btn, !credentialType && { backgroundColor: COLORS.textLight }]}
+            style={[styles.btn, !canSubmit && { backgroundColor: COLORS.textLight }]}
             onPress={handleRegister}
-            disabled={loading || !credentialType}
+            disabled={loading || !canSubmit}
           >
             {loading ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.btnText}>Create Account</Text>}
           </TouchableOpacity>
 
           <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.loginLink}>
             <Text style={styles.loginLinkText}>
-              Already approved? <Text style={styles.loginLinkBold}>Sign In</Text>
+              Already have an account? <Text style={styles.loginLinkBold}>Sign In</Text>
             </Text>
           </TouchableOpacity>
         </View>
@@ -423,20 +458,53 @@ const styles = StyleSheet.create({
   },
   appName: { fontSize: 28, fontWeight: '800', color: COLORS.white },
   subtitleTop: { fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 4 },
-  inviteBanner: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,210,160,0.15)',
-    borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: COLORS.accent,
+  modeRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  modePill: {
+    flex: 1,
+    height: 44,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  inviteText: { color: COLORS.white, marginLeft: 8, fontSize: 13, flex: 1 },
-  highlight: { fontWeight: '700', color: COLORS.accent },
-  warningBanner: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(245,159,0,0.15)',
+  modePillActive: {
+    backgroundColor: COLORS.white,
+    borderColor: COLORS.white,
+  },
+  modePillText: { color: COLORS.white, fontWeight: '700', fontSize: 13 },
+  modePillTextActive: { color: COLORS.secondary },
+  banner: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: 10, padding: 12, marginBottom: 14,
   },
-  warningText: { color: COLORS.warning, marginLeft: 8, fontSize: 13, flex: 1 },
-  tokenCard: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 18, padding: 18, marginBottom: 16 },
-  tokenCardTitle: { fontSize: 15, fontWeight: '800', color: COLORS.white, marginBottom: 6 },
-  tokenCardText: { color: 'rgba(255,255,255,0.72)', fontSize: 12, lineHeight: 18, marginBottom: 12 },
+  bannerText: { color: COLORS.white, marginLeft: 8, fontSize: 13, flex: 1, lineHeight: 18 },
+  panel: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 18, padding: 18, marginBottom: 16 },
+  panelTitle: { fontSize: 15, fontWeight: '800', color: COLORS.white, marginBottom: 6 },
+  panelText: { color: 'rgba(255,255,255,0.72)', fontSize: 12, lineHeight: 18, marginBottom: 12 },
+  planCard: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 16,
+    padding: 14,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  planIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  planHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  planTitle: { fontSize: 15, fontWeight: '800', color: COLORS.white, flex: 1, paddingRight: 10 },
+  planPrice: { fontSize: 13, fontWeight: '800' },
+  planText: { fontSize: 12, color: 'rgba(255,255,255,0.72)', marginTop: 6, lineHeight: 18 },
   card: { backgroundColor: COLORS.white, borderRadius: 20, padding: 28 },
   title: { fontSize: 22, fontWeight: '700', color: COLORS.text, marginBottom: 20 },
   inputGroup: { marginBottom: 14 },
@@ -447,14 +515,14 @@ const styles = StyleSheet.create({
   },
   inputIcon: { marginRight: 8 },
   input: { flex: 1, height: 48, fontSize: 15, color: COLORS.text },
-  verifyBtn: {
+  actionBtn: {
     backgroundColor: COLORS.secondary, borderRadius: 12, height: 46,
     alignItems: 'center', justifyContent: 'center', marginTop: 6,
   },
-  verifyBtnText: { color: COLORS.white, fontSize: 15, fontWeight: '700' },
+  actionBtnText: { color: COLORS.white, fontSize: 15, fontWeight: '700' },
   btn: {
     backgroundColor: COLORS.secondary, borderRadius: 12, height: 50,
-    alignItems: 'center', justifyContent: 'center', marginTop: 8,
+    alignItems: 'center', justifyContent: 'center', marginTop: 10,
   },
   btnText: { color: COLORS.white, fontSize: 16, fontWeight: '700' },
   loginLink: { alignItems: 'center', marginTop: 14 },

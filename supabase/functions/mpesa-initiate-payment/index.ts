@@ -109,7 +109,7 @@ serve(async (req) => {
 
     const { data: profile, error: profileError } = await adminClient
       .from("profiles")
-      .select("id, business_id, status, full_name, roles(name, permissions), businesses(name, display_name, status)")
+      .select("id, business_id, status, full_name, roles(name, permissions), businesses(name, display_name, status, billing_status, subscription_expires_at)")
       .eq("id", userData.user.id)
       .maybeSingle();
 
@@ -123,6 +123,18 @@ serve(async (req) => {
 
     if (profile.businesses?.status !== "active") {
       return jsonResponse({ success: false, error: "This business is currently suspended." }, { status: 403 });
+    }
+
+    const billingStatus = String(profile.businesses?.billing_status || "active");
+    const subscriptionExpiry = profile.businesses?.subscription_expires_at
+      ? new Date(profile.businesses.subscription_expires_at)
+      : null;
+
+    if (
+      !["trialing", "active"].includes(billingStatus) ||
+      (subscriptionExpiry && !Number.isNaN(subscriptionExpiry.getTime()) && subscriptionExpiry.getTime() < Date.now())
+    ) {
+      return jsonResponse({ success: false, error: "This business subscription is not active. Renew billing before using M-Pesa checkout." }, { status: 403 });
     }
 
     if (profile.roles?.permissions?.create_sale !== true) {

@@ -8,9 +8,10 @@ import { supabase } from '../../utils/supabase';
 import { ROLE_PERMISSIONS } from '../../utils/constants';
 import { cleanText } from '../../utils/textEncoding';
 import { mpesaEnvironmentLabel, mpesaTillTypeLabel } from '../../utils/mpesa';
+import BillingAdminCard from '../../components/BillingAdminCard';
 
 export default function ProfileScreen() {
-  const { profile, signOut, fetchProfile, hasPermission, isSuperAdmin, isAdmin } = useAuth();
+  const { profile, signOut, fetchProfile, hasPermission, isAdmin } = useAuth();
   const { colors, isDark, toggleTheme } = useTheme();
   const insets = useSafeAreaInsets();
   const [editName, setEditName] = useState(false);
@@ -215,6 +216,7 @@ export default function ProfileScreen() {
   const deniedPerms = Object.entries(perms).filter(([, allowed]) => !allowed).map(([permission]) => permission);
   const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'Your Business';
   const canEditBusinessName = isAdmin();
+  const canManageBilling = hasPermission('manage_billing');
   const canManagePayments = hasPermission('manage_payments');
 
   const Section = ({ title, children }) => (
@@ -273,12 +275,6 @@ export default function ProfileScreen() {
           <Ionicons name="shield-checkmark" size={13} color={colors.secondary} />
           <Text style={{ fontSize: 12, fontWeight: '700', color: colors.secondary }}>{profile?.roles?.name?.replace(/_/g, ' ').toUpperCase()}</Text>
         </View>
-        {isSuperAdmin() && (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.warning + '15', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, marginTop: 8 }}>
-            <Ionicons name="key" size={13} color={colors.warning} />
-            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.warning }}>SUPER ADMIN</Text>
-          </View>
-        )}
       </View>
 
       <Section title="Appearance">
@@ -321,7 +317,7 @@ export default function ProfileScreen() {
             {canEditBusinessName && (
               <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
                 <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-                  Your staff and invite emails will use this name. Platform control keeps your original business name unchanged.
+                  Your staff and invite emails will use this name. Keep it customer-facing and easy for your team to recognize.
                 </Text>
               </View>
             )}
@@ -337,7 +333,7 @@ export default function ProfileScreen() {
               autoFocus
             />
             <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-              This updates the staff-facing business name only. The original business name in platform control stays the same.
+              This updates the team-facing business name without affecting your billing records or legal owner details.
             </Text>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
               <TouchableOpacity
@@ -361,6 +357,18 @@ export default function ProfileScreen() {
         )}
       </Section>
 
+      {canManageBilling && (
+        <Section title="BizFlow Billing">
+          <View style={{ padding: 16 }}>
+            <BillingAdminCard
+              profile={profile}
+              colors={colors}
+              onRefresh={() => fetchProfile(profile.id)}
+            />
+          </View>
+        </Section>
+      )}
+
       {canManagePayments && (
         <Section title="Payments">
           <View style={{ padding: 16 }}>
@@ -368,7 +376,7 @@ export default function ProfileScreen() {
               <View style={{ flex: 1, paddingRight: 12 }}>
                 <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>M-Pesa Integration</Text>
                 <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
-                  This business controls its own Daraja credentials. No super-admin step is needed once you save them here.
+                  This business controls its own Daraja credentials. Save them once here, then staff can use M-Pesa at checkout.
                 </Text>
               </View>
               <Switch
@@ -509,9 +517,6 @@ export default function ProfileScreen() {
       <Section title="Account">
         <Row icon="calendar-outline" label="Joined" value={profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'} />
         <Row icon="checkmark-circle-outline" label="Status" value={profile?.status || 'active'} />
-        {isSuperAdmin() && (
-          <Row icon="shield-half-outline" label="Platform Access" value="Can generate client tokens and control business access" />
-        )}
       </Section>
 
       <TouchableOpacity
