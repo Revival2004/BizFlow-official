@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, Alert, ActivityIndicator, ScrollView
+  KeyboardAvoidingView, Platform, Alert, ActivityIndicator, ScrollView, useWindowDimensions
 } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS } from '../../utils/constants';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function LoginScreen({ navigation }) {
+  const { width } = useWindowDimensions();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 960;
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -29,17 +31,40 @@ export default function LoginScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <View style={styles.logoArea}>
-          <View style={styles.logoCircle}>
-            <Ionicons name="business" size={40} color={COLORS.white} />
-          </View>
-          <Text style={styles.appName}>BizFlow</Text>
-          <Text style={styles.tagline}>Retail operations</Text>
-        </View>
+      <ScrollView contentContainerStyle={[styles.scroll, isDesktopWeb && styles.scrollDesktop]} keyboardShouldPersistTaps="handled">
+        <View style={[styles.shell, isDesktopWeb && styles.shellDesktop]}>
+          <View style={[styles.brandPanel, isDesktopWeb && styles.brandPanelDesktop]}>
+            <View style={styles.logoArea}>
+              <View style={styles.logoCircle}>
+                <Ionicons name="business" size={40} color={COLORS.white} />
+              </View>
+              <Text style={styles.appName}>BizFlow</Text>
+              <Text style={styles.tagline}>Retail operations</Text>
+            </View>
 
-        <View style={styles.card}>
+            {isDesktopWeb ? (
+              <View style={styles.desktopStory}>
+                <Text style={styles.desktopEyebrow}>Desktop Workspace</Text>
+                <Text style={styles.desktopHeadline}>Run sales, stock, billing, and reporting from one focused control desk.</Text>
+                <View style={styles.desktopList}>
+                  {[
+                    'Search inventory by name, SKU, or barcode',
+                    'Track fast movers and stock pressure quickly',
+                    'Handle Paystack billing without leaving the workspace',
+                  ].map((item) => (
+                    <View key={item} style={styles.desktopListRow}>
+                      <View style={styles.desktopDot} />
+                      <Text style={styles.desktopListText}>{item}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+          </View>
+
+        <View style={[styles.card, isDesktopWeb && styles.cardDesktop]}>
           <Text style={styles.title}>Sign In</Text>
+          {isDesktopWeb ? <Text style={styles.subtitle}>Open your BizFlow workspace.</Text> : null}
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Email Address</Text>
@@ -90,6 +115,7 @@ export default function LoginScreen({ navigation }) {
             </Text>
           </TouchableOpacity>
         </View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -98,6 +124,25 @@ export default function LoginScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.primary },
   scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  scrollDesktop: { paddingVertical: 40 },
+  shell: { width: '100%', alignSelf: 'center' },
+  shellDesktop: {
+    maxWidth: 1160,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 26,
+  },
+  brandPanel: { marginBottom: 32 },
+  brandPanelDesktop: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 28,
+    padding: 32,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    justifyContent: 'space-between',
+    marginBottom: 0,
+  },
   logoArea: { alignItems: 'center', marginBottom: 32 },
   logoCircle: {
     width: 80, height: 80, borderRadius: 40,
@@ -108,9 +153,23 @@ const styles = StyleSheet.create({
   },
   appName: { fontSize: 32, fontWeight: '800', color: COLORS.white, letterSpacing: 1 },
   tagline: { fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 4 },
+  desktopStory: { marginTop: 12 },
+  desktopEyebrow: { fontSize: 11, fontWeight: '800', color: 'rgba(255,255,255,0.62)', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 10 },
+  desktopHeadline: { fontSize: 24, lineHeight: 34, fontWeight: '800', color: COLORS.white, marginBottom: 18 },
+  desktopList: { gap: 12 },
+  desktopListRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  desktopDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.accent, marginRight: 10, marginTop: 6 },
+  desktopListText: { flex: 1, fontSize: 14, color: 'rgba(255,255,255,0.78)', lineHeight: 22 },
   card: {
     backgroundColor: COLORS.white, borderRadius: 20, padding: 28,
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 6,
+  },
+  cardDesktop: {
+    flex: 0.95,
+    alignSelf: 'center',
+    maxWidth: 470,
+    borderRadius: 28,
+    padding: 34,
   },
   title: { fontSize: 22, fontWeight: '700', color: COLORS.text, marginBottom: 4 },
   subtitle: { fontSize: 14, color: COLORS.textLight, marginBottom: 24 },

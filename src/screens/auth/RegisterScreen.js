@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, Alert, ActivityIndicator, ScrollView,
+  KeyboardAvoidingView, Platform, Alert, ActivityIndicator, ScrollView, useWindowDimensions,
 } from 'react-native';
 import { isSupabaseConfigured, supabase } from '../../utils/supabase';
 import { COLORS } from '../../utils/constants';
@@ -10,6 +10,7 @@ import { humanizeLabel } from '../../utils/data';
 import { formatBillingAmount } from '../../utils/billing';
 
 export default function RegisterScreen({ navigation, route }) {
+  const { width } = useWindowDimensions();
   const [mode, setMode] = useState(route?.params?.token ? 'staff' : 'business');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -20,6 +21,7 @@ export default function RegisterScreen({ navigation, route }) {
   const [inviteData, setInviteData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [verifyingInvite, setVerifyingInvite] = useState(false);
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1040;
 
   useEffect(() => {
     const token = route?.params?.token;
@@ -320,30 +322,40 @@ export default function RegisterScreen({ navigation, route }) {
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        <View style={styles.logoArea}>
-          <View style={styles.logoCircle}>
-            <Ionicons name={mode === 'business' ? 'business' : 'people'} size={34} color={COLORS.white} />
+      <ScrollView contentContainerStyle={[styles.scroll, isDesktopWeb && styles.scrollDesktop]} keyboardShouldPersistTaps="handled">
+        <View style={[styles.shell, isDesktopWeb && styles.shellDesktop]}>
+          <View style={[styles.contextPanel, isDesktopWeb && styles.contextPanelDesktop]}>
+            <View style={styles.logoArea}>
+              <View style={styles.logoCircle}>
+                <Ionicons name={mode === 'business' ? 'business' : 'people'} size={34} color={COLORS.white} />
+              </View>
+              <Text style={styles.appName}>BizFlow</Text>
+              <Text style={styles.subtitleTop}>Business signup and team invites</Text>
+            </View>
+
+            <View style={styles.modeRow}>
+              <TouchableOpacity style={[styles.modePill, mode === 'business' && styles.modePillActive]} onPress={() => setMode('business')}>
+                <Text style={[styles.modePillText, mode === 'business' && styles.modePillTextActive]}>Start a Business</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modePill, mode === 'staff' && styles.modePillActive]} onPress={() => setMode('staff')}>
+                <Text style={[styles.modePillText, mode === 'staff' && styles.modePillTextActive]}>Join a Team</Text>
+              </TouchableOpacity>
+            </View>
+
+            {mode === 'staff' ? renderStaffMode() : renderBusinessMode()}
           </View>
-          <Text style={styles.appName}>BizFlow</Text>
-          <Text style={styles.subtitleTop}>Business signup and team invites</Text>
-        </View>
 
-        <View style={styles.modeRow}>
-          <TouchableOpacity style={[styles.modePill, mode === 'business' && styles.modePillActive]} onPress={() => setMode('business')}>
-            <Text style={[styles.modePillText, mode === 'business' && styles.modePillTextActive]}>Start a Business</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.modePill, mode === 'staff' && styles.modePillActive]} onPress={() => setMode('staff')}>
-            <Text style={[styles.modePillText, mode === 'staff' && styles.modePillTextActive]}>Join a Team</Text>
-          </TouchableOpacity>
-        </View>
-
-        {mode === 'staff' ? renderStaffMode() : renderBusinessMode()}
-
-        <View style={styles.card}>
+        <View style={[styles.card, isDesktopWeb && styles.cardDesktop]}>
           <Text style={styles.title}>
             {mode === 'business' ? 'Create Account' : 'Create Staff Account'}
           </Text>
+          {isDesktopWeb ? (
+            <Text style={styles.desktopFormHint}>
+              {mode === 'business'
+                ? 'Create the account first. Billing stays inside the app.'
+                : 'Use a verified invite token, then complete the staff account.'}
+            </Text>
+          ) : null}
 
           {mode === 'business' && (
             <View style={styles.inputGroup}>
@@ -437,6 +449,7 @@ export default function RegisterScreen({ navigation, route }) {
             </Text>
           </TouchableOpacity>
         </View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -445,6 +458,19 @@ export default function RegisterScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.primary },
   scroll: { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  scrollDesktop: { paddingVertical: 34 },
+  shell: { width: '100%', alignSelf: 'center' },
+  shellDesktop: { maxWidth: 1220, flexDirection: 'row', gap: 26, alignItems: 'flex-start' },
+  contextPanel: { marginBottom: 16 },
+  contextPanelDesktop: {
+    flex: 1.1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 28,
+    padding: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    marginBottom: 0,
+  },
   logoArea: { alignItems: 'center', marginBottom: 18 },
   logoCircle: {
     width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.accent,
@@ -500,7 +526,9 @@ const styles = StyleSheet.create({
   planPrice: { fontSize: 13, fontWeight: '800' },
   planText: { fontSize: 12, color: 'rgba(255,255,255,0.72)', marginTop: 6, lineHeight: 18 },
   card: { backgroundColor: COLORS.white, borderRadius: 20, padding: 28 },
+  cardDesktop: { flex: 0.92, maxWidth: 470, borderRadius: 28, padding: 34, alignSelf: 'stretch' },
   title: { fontSize: 22, fontWeight: '700', color: COLORS.text, marginBottom: 20 },
+  desktopFormHint: { fontSize: 13, color: COLORS.textLight, marginBottom: 18, lineHeight: 20 },
   inputGroup: { marginBottom: 14 },
   label: { fontSize: 13, fontWeight: '600', color: COLORS.text, marginBottom: 6 },
   inputRow: {

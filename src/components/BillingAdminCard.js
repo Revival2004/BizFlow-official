@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { supabase } from '../utils/supabase';
 import {
   BILLING_STATUSES,
@@ -13,6 +13,7 @@ import {
 import { copyText, openExternalUrl } from '../utils/web';
 
 export default function BillingAdminCard({ profile, colors, mode = 'embedded', onRefresh }) {
+  const { width } = useWindowDimensions();
   const [plans, setPlans] = useState([]);
   const [summary, setSummary] = useState(null);
   const [selectedPlanId, setSelectedPlanId] = useState(null);
@@ -173,6 +174,9 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
 
   const statusMeta = BILLING_STATUSES[summary?.billing_status || businessBilling.status] || BILLING_STATUSES.active;
   const accentColor = colors[statusMeta.tone] || colors.secondary;
+  const isDesktopWeb = Platform.OS === 'web' && width >= 980;
+  const compactButtons = width < 720;
+  const planCardWidth = isDesktopWeb ? '48.5%' : '100%';
   const copyCheckoutLink = async () => {
     if (!pendingCheckout?.authorizationUrl) {
       return;
@@ -196,19 +200,57 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
         borderColor: colors.border,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <View style={{ flex: 1, paddingRight: 12 }}>
-          <Text style={{ fontSize: mode === 'gate' ? 22 : 17, fontWeight: '800', color: colors.text }}>
-            {mode === 'gate' ? 'Renew BizFlow Billing' : 'Business Billing'}
-          </Text>
-          <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
-            {mode === 'gate'
-              ? 'Renew on Paystack, then verify the payment here.'
-              : 'Every business starts with a 7-day trial. Upgrade here when you are ready.'}
-          </Text>
+      <View style={{ flexDirection: isDesktopWeb ? 'row' : 'column', gap: 14, marginBottom: 14 }}>
+        <View style={{ flex: isDesktopWeb ? 1.2 : 0 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={{ fontSize: mode === 'gate' ? 22 : 17, fontWeight: '800', color: colors.text }}>
+                {mode === 'gate' ? 'Renew BizFlow Billing' : 'Business Billing'}
+              </Text>
+              <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
+                {mode === 'gate'
+                  ? 'Renew on Paystack, then verify the payment here.'
+                  : 'Every business starts with a 7-day trial. Upgrade here when you are ready.'}
+              </Text>
+            </View>
+            <View style={{ backgroundColor: accentColor + '15', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 }}>
+              <Text style={{ color: accentColor, fontSize: 11, fontWeight: '800' }}>{statusMeta.label.toUpperCase()}</Text>
+            </View>
+          </View>
+
+          {loading ? (
+            <ActivityIndicator color={colors.secondary} style={{ marginVertical: 28 }} />
+          ) : (
+            <View style={{ flexDirection: compactButtons ? 'column' : 'row', gap: 10 }}>
+              <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 14, padding: 12 }}>
+                <Text style={{ fontSize: 11, color: colors.textLight, fontWeight: '700', marginBottom: 4 }}>Current Plan</Text>
+                <Text style={{ fontSize: 15, color: colors.text, fontWeight: '800' }}>
+                  {summary?.current_plan?.name || 'Not set'}
+                </Text>
+              </View>
+              <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 14, padding: 12 }}>
+                <Text style={{ fontSize: 11, color: colors.textLight, fontWeight: '700', marginBottom: 4 }}>Access Until</Text>
+                <Text style={{ fontSize: 15, color: colors.text, fontWeight: '800' }}>
+                  {formatBillingDate(summary?.subscription_expires_at || profile?.businesses?.subscription_expires_at)}
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
-        <View style={{ backgroundColor: accentColor + '15', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 }}>
-          <Text style={{ color: accentColor, fontSize: 11, fontWeight: '800' }}>{statusMeta.label.toUpperCase()}</Text>
+
+        <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 18, padding: 16, justifyContent: 'space-between' }}>
+          <View>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, marginBottom: 6 }}>Choose a plan</Text>
+            <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
+              Beta renews monthly. Lifetime is a one-time upgrade.
+            </Text>
+            <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18, marginTop: 8 }}>
+              Desktop checkout opens in a new tab so this billing page stays ready for verification.
+            </Text>
+          </View>
+          <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18, marginTop: 12 }}>
+            Billing help: {PLATFORM_BILLING_SUPPORT_PHONE}
+          </Text>
         </View>
       </View>
 
@@ -216,29 +258,7 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
         <ActivityIndicator color={colors.secondary} style={{ marginVertical: 28 }} />
       ) : (
         <>
-          <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
-            <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 14, padding: 12 }}>
-              <Text style={{ fontSize: 11, color: colors.textLight, fontWeight: '700', marginBottom: 4 }}>Current Plan</Text>
-              <Text style={{ fontSize: 15, color: colors.text, fontWeight: '800' }}>
-                {summary?.current_plan?.name || 'Not set'}
-              </Text>
-            </View>
-            <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 14, padding: 12 }}>
-              <Text style={{ fontSize: 11, color: colors.textLight, fontWeight: '700', marginBottom: 4 }}>Access Until</Text>
-              <Text style={{ fontSize: 15, color: colors.text, fontWeight: '800' }}>
-                {formatBillingDate(summary?.subscription_expires_at || profile?.businesses?.subscription_expires_at)}
-              </Text>
-            </View>
-          </View>
-
-          <View style={{ backgroundColor: colors.bg, borderRadius: 14, padding: 14, marginBottom: 14 }}>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, marginBottom: 6 }}>Choose a plan</Text>
-            <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-              Beta renews monthly. Lifetime is a one-time upgrade.
-            </Text>
-            <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18, marginTop: 8 }}>Billing help: {PLATFORM_BILLING_SUPPORT_PHONE}</Text>
-          </View>
-
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
           {plans.map((plan) => {
             const isSelected = plan.id === selectedPlanId;
             const features = planFeatureMap[plan.slug] || normalizeBillingFeatures(plan.features);
@@ -252,6 +272,7 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
                 activeOpacity={0.85}
                 onPress={() => setSelectedPlanId(plan.id)}
                 style={{
+                  width: planCardWidth,
                   borderWidth: 1.5,
                   borderColor: isSelected ? colors.secondary : colors.border,
                   backgroundColor: isSelected ? colors.secondary + '10' : colors.card,
@@ -290,6 +311,7 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
               </TouchableOpacity>
             );
           })}
+          </View>
 
           {pendingCheckout ? (
             <View style={{ backgroundColor: colors.bg, borderRadius: 16, padding: 14, marginTop: 4 }}>
@@ -300,10 +322,10 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
               <Text selectable style={{ fontSize: 11, color: colors.secondary, marginTop: 10 }}>
                 Reference: {pendingCheckout.reference}
               </Text>
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <View style={{ flexDirection: compactButtons ? 'column' : 'row', gap: 10, marginTop: 12 }}>
                 <TouchableOpacity
                   style={{
-                    flex: 1,
+                    flex: compactButtons ? 0 : 1,
                     borderWidth: 1.5,
                     borderColor: colors.secondary,
                     borderRadius: 12,
@@ -317,7 +339,7 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={{
-                    flex: 1,
+                    flex: compactButtons ? 0 : 1,
                     borderWidth: 1.5,
                     borderColor: colors.border,
                     borderRadius: 12,
@@ -331,7 +353,7 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={{
-                    flex: 1,
+                    flex: compactButtons ? 0 : 1,
                     backgroundColor: colors.secondary,
                     borderRadius: 12,
                     height: 44,
@@ -355,7 +377,7 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
             style={{
               backgroundColor: colors.secondary,
               borderRadius: 14,
-              height: 50,
+              height: isDesktopWeb ? 54 : 50,
               alignItems: 'center',
               justifyContent: 'center',
               marginTop: 16,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
@@ -8,23 +8,27 @@ import BillingAdminCard from '../../components/BillingAdminCard';
 import { PLATFORM_BILLING_SUPPORT_PHONE } from '../../utils/billing';
 
 export default function BillingGateScreen() {
+  const { width } = useWindowDimensions();
   const { profile, signOut, hasPermission, fetchProfile, billingState } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const canManageBilling = hasPermission('manage_billing');
   const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'Your Business';
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1080;
 
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={{ padding: 18, paddingBottom: 36 + insets.bottom }}
+      contentContainerStyle={{ padding: 18, paddingBottom: 36 + insets.bottom, alignItems: 'center' }}
     >
+      <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1180 : 760 }}>
+      <View style={{ flexDirection: isDesktopWeb ? 'row' : 'column', gap: 18 }}>
       <View
         style={{
+          flex: isDesktopWeb ? 0.95 : 0,
           backgroundColor: colors.card,
           borderRadius: 24,
           padding: 22,
-          marginBottom: 16,
           borderWidth: 1,
           borderColor: colors.border,
         }}
@@ -66,29 +70,32 @@ export default function BillingGateScreen() {
         </View>
       </View>
 
-      {canManageBilling ? (
-        <BillingAdminCard
-          profile={profile}
-          colors={colors}
-          mode="gate"
-          onRefresh={() => fetchProfile(profile.id)}
-        />
-      ) : (
-        <View
-          style={{
-            backgroundColor: colors.card,
-            borderRadius: 20,
-            padding: 18,
-            borderWidth: 1,
-            borderColor: colors.border,
-          }}
-        >
-          <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text }}>Contact Your Business Admin</Text>
-          <Text style={{ fontSize: 13, color: colors.textLight, marginTop: 8, lineHeight: 21 }}>
-            Only the business admin can renew billing through Paystack. Once they restore access, you can sign back in and keep working.
-          </Text>
-        </View>
-      )}
+      <View style={{ flex: 1 }}>
+        {canManageBilling ? (
+          <BillingAdminCard
+            profile={profile}
+            colors={colors}
+            mode="gate"
+            onRefresh={() => fetchProfile(profile.id)}
+          />
+        ) : (
+          <View
+            style={{
+              backgroundColor: colors.card,
+              borderRadius: 20,
+              padding: 18,
+              borderWidth: 1,
+              borderColor: colors.border,
+            }}
+          >
+            <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text }}>Contact Your Business Admin</Text>
+            <Text style={{ fontSize: 13, color: colors.textLight, marginTop: 8, lineHeight: 21 }}>
+              Only the business admin can renew billing through Paystack. Once they restore access, you can sign back in and keep working.
+            </Text>
+          </View>
+        )}
+      </View>
+      </View>
 
       <TouchableOpacity
         style={{
@@ -112,6 +119,7 @@ export default function BillingGateScreen() {
         <Ionicons name="log-out-outline" size={20} color={colors.danger} />
         <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>Sign Out</Text>
       </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 }
