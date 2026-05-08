@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BFlow Offline</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top, rgba(37, 99, 235, 0.22), transparent 42%),
+          #040b18;
+        color: #f8fafc;
+        font-family: "Segoe UI", Arial, sans-serif;
+        padding: 24px;
+      }
+
+      .card {
+        width: min(440px, 100%);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        border-radius: 28px;
+        background: rgba(15, 23, 42, 0.82);
+        backdrop-filter: blur(14px);
+        padding: 30px 26px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
+      }
+
+      .brand {
+        font-size: 34px;
+        font-weight: 900;
+        letter-spacing: 0.6px;
+        margin: 0 0 12px;
+      }
+
+      .brand span {
+        color: #60a5fa;
+      }
+
+      h1 {
+        font-size: 18px;
+        margin: 0 0 10px;
+      }
+
+      p {
+        margin: 0;
+        color: rgba(241, 245, 249, 0.78);
+        line-height: 1.6;
+        font-size: 14px;
+      }
+
+      .tips {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(30, 41, 59, 0.76);
+      }
+
+      .tips strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: #93c5fd;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <p class="brand"><span>B</span>Flow</p>
+      <h1>You’re offline.</h1>
+      <p>BizFlow will keep working with the data already cached on this device. Reconnect to refresh cloud data, verify payments, and sync any pending actions.</p>
+      <section class="tips">
+        <strong>Best use while offline</strong>
+        <p>Review recent dashboard data, work with cached stock and reports, and continue local-first sales until the connection returns.</p>
+      </section>
+    </main>
+  </body>
+</html>

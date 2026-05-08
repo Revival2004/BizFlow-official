@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>BFlow</title>
+    <meta
+      name="description"
+      content="BizFlow keeps sales, stock, reports, billing, staff, and checkout operations flowing across phone and desktop."
+    />
+    <meta name="theme-color" content="#040B18" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="BFlow" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/logo192.png" />
+    <link rel="icon" href="/favicon.ico" />
+
+    <style id="expo-reset">
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        overflow: hidden;
+        background: #040b18;
+      }
+
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+  </head>
+
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script>
+      (function () {
+        if (!('serviceWorker' in navigator)) {
+          return;
+        }
+
+        window.addEventListener('load', function () {
+          navigator.serviceWorker
+            .register('/sw.js')
+            .then(function (registration) {
+              window.__BIZFLOW_SW_REGISTRATION__ = registration;
+
+              var notifyUpdateReady = function () {
+                document.dispatchEvent(
+                  new CustomEvent('bizflow-sw-update-ready', {
+                    detail: { registration: registration },
+                  })
+                );
+              };
+
+              if (registration.waiting) {
+                notifyUpdateReady();
+              }
+
+              registration.addEventListener('updatefound', function () {
+                var installing = registration.installing;
+                if (!installing) {
+                  return;
+                }
+
+                installing.addEventListener('statechange', function () {
+                  if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+                    notifyUpdateReady();
+                  }
+                });
+              });
+            })
+            .catch(function (error) {
+              console.error('BizFlow service worker registration failed:', error);
+            });
+        });
+      })();
+    </script>
+  </body>
+</html>

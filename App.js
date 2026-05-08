@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/context/AuthContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
+import WebPwaBanner from './src/components/WebPwaBanner';
 
 function Root() {
   const { isDark } = useTheme();
@@ -116,6 +117,7 @@ function AppShell() {
   return (
     <View style={styles.appShell}>
       <Root />
+      <WebPwaBanner />
       {showSplash ? <StartupSplash onFinish={() => setShowSplash(false)} /> : null}
     </View>
   );

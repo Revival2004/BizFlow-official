@@ -1,0 +1,56 @@
+{
+  "id": "/",
+  "name": "BFlow by BizFlow",
+  "short_name": "BFlow",
+  "description": "Professional sales, stock, reports, staff, and billing operations for retail businesses.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "portrait-primary",
+  "theme_color": "#040B18",
+  "background_color": "#040B18",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    {
+      "src": "/logo192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/maskable-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New Sale",
+      "short_name": "Sale",
+      "description": "Jump into a fresh sale.",
+      "url": "/MainTabs/Sales/NewSale"
+    },
+    {
+      "name": "Stock",
+      "short_name": "Stock",
+      "description": "Open inventory and product management.",
+      "url": "/MainTabs/Stock"
+    },
+    {
+      "name": "Reports",
+      "short_name": "Reports",
+      "description": "Review business reports and exports.",
+      "url": "/MainTabs/Reports"
+    }
+  ]
+}
