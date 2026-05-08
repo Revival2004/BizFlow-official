@@ -1,7 +1,7 @@
 import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, TextInput,
-  Modal, Alert, ActivityIndicator, ScrollView, Animated,
+  Modal, Alert, ActivityIndicator, ScrollView, Animated, Platform, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +16,7 @@ import { cacheProducts, cacheStockSnapshot, getCachedStockSnapshot } from '../..
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
+  const useNativeDriver = Platform.OS !== 'web';
 
   useEffect(() => {
     if (!trigger || !message) {
@@ -24,11 +25,11 @@ function LowStockToast({ message, trigger }) {
 
     opacity.setValue(0);
     Animated.sequence([
-      Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver }),
       Animated.delay(2800),
-      Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver }),
     ]).start();
-  }, [message, opacity, trigger]);
+  }, [message, opacity, trigger, useNativeDriver]);
 
   return (
     <Animated.View style={{ opacity, position: 'absolute', bottom: 24, left: 16, right: 16, backgroundColor: '#F59F00', borderRadius: 12, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 999, elevation: 10 }}>
@@ -57,6 +58,7 @@ export default function StockScreen() {
   const { profile, hasPermission } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const fetchRequestRef = useRef(0);
   const productActionRef = useRef(false);
   const adjustmentActionRef = useRef(false);
@@ -84,6 +86,9 @@ export default function StockScreen() {
   const [isOffline, setIsOffline] = useState(false);
   const deferredSearch = useDeferredValue(search);
   const deferredCategory = useDeferredValue(catFilter);
+  const isDesktopWeb = Platform.OS === 'web' && width >= 960;
+  const isNarrow = width < 640;
+  const summaryCardWidth = width >= 1160 ? '24%' : width >= 640 ? '48%' : '100%';
 
   useEffect(() => {
     fetchAll();
@@ -559,9 +564,9 @@ export default function StockScreen() {
         maxToRenderPerBatch={12}
         windowSize={8}
         removeClippedSubviews
-        contentContainerStyle={{ padding: 12, paddingBottom: 20 + insets.bottom }}
+        contentContainerStyle={{ padding: 12, paddingBottom: 20 + insets.bottom, alignItems: 'center' }}
         ListHeaderComponent={(
-          <>
+          <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1180 : 760 }}>
             <View style={{ backgroundColor: colors.card, borderRadius: 22, padding: 18, marginBottom: 14, borderWidth: 1, borderColor: colors.border }}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
                 <View style={{ flex: 1, paddingRight: 12 }}>
@@ -582,7 +587,7 @@ export default function StockScreen() {
                   { label: 'Out of Stock', value: outCount, hint: outCount > 0 ? 'Urgent action' : 'No outages', color: colors.danger, icon: 'remove-circle-outline' },
                   { label: 'Stock Value', value: fmt(totalStockValue), hint: `${stockHealth}% healthy`, color: colors.secondary, icon: 'cash-outline' },
                 ].map((card) => (
-                  <View key={card.label} style={{ width: '48%', backgroundColor: colors.bg, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border }}>
+                  <View key={card.label} style={{ width: summaryCardWidth, backgroundColor: colors.bg, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <Ionicons name={card.icon} size={16} color={card.color} />
                       <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textLight }}>{card.label}</Text>
@@ -594,7 +599,7 @@ export default function StockScreen() {
               </View>
             </View>
 
-            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+            <View style={{ flexDirection: isNarrow ? 'column' : 'row', gap: 10, marginBottom: 12 }}>
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: 14, paddingHorizontal: 14, height: 48, borderWidth: 1, borderColor: colors.border }}>
                 <Ionicons name="search" size={17} color={colors.textLight} />
                 <TextInput
@@ -653,7 +658,7 @@ export default function StockScreen() {
                 {lowStockCount > 0 ? `${lowStockCount} low stock` : 'Inventory stable'}
               </Text>
             </View>
-          </>
+          </View>
         )}
         renderItem={({ item }) => {
           const isOut = item.quantity === 0;
@@ -663,7 +668,7 @@ export default function StockScreen() {
             : '0';
 
           return (
-            <View style={{ backgroundColor: colors.card, borderRadius: 18, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: colors.border }}>
+            <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1180 : 760, backgroundColor: colors.card, borderRadius: 18, padding: 16, marginBottom: 10, borderWidth: 1, borderColor: colors.border }}>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
                 <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: (isOut ? colors.danger : isLow ? colors.warning : colors.secondary) + '14', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
                   <Ionicons name={isOut ? 'alert-circle' : isLow ? 'warning' : 'cube-outline'} size={22} color={isOut ? colors.danger : isLow ? colors.warning : colors.secondary} />
@@ -680,12 +685,12 @@ export default function StockScreen() {
                   </View>
 
                   <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4 }}>
-                    {item.sku ? `SKU ${cleanText(item.sku || '')} · ` : ''}{item.barcode ? `Code ${cleanText(item.barcode || '')} · ` : ''}{cleanText(item.categories?.name || 'Uncategorised')}
+                    {[item.sku ? `SKU ${cleanText(item.sku || '')}` : null, item.barcode ? `Code ${cleanText(item.barcode || '')}` : null, cleanText(item.categories?.name || 'Uncategorised')].filter(Boolean).join(' | ')}
                   </Text>
                 </View>
               </View>
 
-              <View style={{ flexDirection: 'row', backgroundColor: colors.bg, borderRadius: 16, padding: 12, marginTop: 14 }}>
+              <View style={{ flexDirection: isNarrow ? 'column' : 'row', backgroundColor: colors.bg, borderRadius: 16, padding: 12, marginTop: 14, gap: isNarrow ? 12 : 0 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 11, color: colors.textLight, marginBottom: 4 }}>Selling Price</Text>
                   <Text style={{ fontSize: 15, fontWeight: '800', color: colors.secondary }}>{fmt(item.selling_price)}</Text>
@@ -701,12 +706,12 @@ export default function StockScreen() {
                 </View>
               </View>
 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingHorizontal: 2 }}>
+              <View style={{ flexDirection: isNarrow ? 'column' : 'row', justifyContent: 'space-between', marginTop: 10, paddingHorizontal: 2, gap: isNarrow ? 6 : 0 }}>
                 <Text style={{ fontSize: 12, color: colors.textLight }}>Reorder at {item.reorder_level}</Text>
                 <Text style={{ fontSize: 12, fontWeight: '700', color: colors.success }}>{margin}% margin</Text>
               </View>
 
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+              <View style={{ flexDirection: isNarrow ? 'column' : 'row', gap: 8, marginTop: 14 }}>
                 {hasPermission('add_stock') && (
                   <TouchableOpacity
                     style={{ flex: 1, height: 42, borderRadius: 12, backgroundColor: colors.secondary + '12', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6 }}
@@ -774,7 +779,7 @@ export default function StockScreen() {
           );
         }}
         ListEmptyComponent={(
-          <View style={{ backgroundColor: colors.card, borderRadius: 18, padding: 36, alignItems: 'center', borderWidth: 1, borderColor: colors.border }}>
+          <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1180 : 760, backgroundColor: colors.card, borderRadius: 18, padding: 36, alignItems: 'center', borderWidth: 1, borderColor: colors.border }}>
             <Ionicons name="cube-outline" size={50} color={colors.textLight} />
             <Text style={{ color: colors.text, marginTop: 12, fontSize: 16, fontWeight: '700' }}>No products found</Text>
             <Text style={{ color: colors.textLight, marginTop: 6, textAlign: 'center' }}>
@@ -785,8 +790,8 @@ export default function StockScreen() {
       />
 
       <Modal visible={modalVisible} transparent animationType="slide">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '88%', paddingBottom: 24 + insets.bottom }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: isDesktopWeb ? 'center' : 'flex-end', padding: isDesktopWeb ? 24 : 0 }}>
+          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderBottomLeftRadius: isDesktopWeb ? 24 : 0, borderBottomRightRadius: isDesktopWeb ? 24 : 0, padding: 24, maxHeight: '88%', paddingBottom: 24 + insets.bottom, width: '100%', maxWidth: isDesktopWeb ? 760 : undefined, alignSelf: isDesktopWeb ? 'center' : 'stretch' }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{editProduct ? 'Edit Product' : 'Add Product'}</Text>
               <TouchableOpacity onPress={resetProductModal}><Ionicons name="close" size={24} color={colors.text} /></TouchableOpacity>
@@ -837,8 +842,8 @@ export default function StockScreen() {
       </Modal>
 
       <Modal visible={adjModal} transparent animationType="slide">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 24 + insets.bottom }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: isDesktopWeb ? 'center' : 'flex-end', padding: isDesktopWeb ? 24 : 0 }}>
+          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderBottomLeftRadius: isDesktopWeb ? 24 : 0, borderBottomRightRadius: isDesktopWeb ? 24 : 0, padding: 24, paddingBottom: 24 + insets.bottom, width: '100%', maxWidth: isDesktopWeb ? 620 : undefined, alignSelf: isDesktopWeb ? 'center' : 'stretch' }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>Adjust Stock</Text>
               <TouchableOpacity onPress={() => setAdjModal(false)}><Ionicons name="close" size={24} color={colors.text} /></TouchableOpacity>
@@ -863,8 +868,8 @@ export default function StockScreen() {
       </Modal>
 
       <Modal visible={categoryModal} transparent animationType="slide">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '75%', paddingBottom: 24 + insets.bottom }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: isDesktopWeb ? 'center' : 'flex-end', padding: isDesktopWeb ? 24 : 0 }}>
+          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderBottomLeftRadius: isDesktopWeb ? 24 : 0, borderBottomRightRadius: isDesktopWeb ? 24 : 0, padding: 24, maxHeight: '75%', paddingBottom: 24 + insets.bottom, width: '100%', maxWidth: isDesktopWeb ? 720 : undefined, alignSelf: isDesktopWeb ? 'center' : 'stretch' }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>Manage Categories</Text>
               <TouchableOpacity onPress={() => { setCategoryModal(false); setCategoryName(''); setEditingCategory(null); }}><Ionicons name="close" size={24} color={colors.text} /></TouchableOpacity>

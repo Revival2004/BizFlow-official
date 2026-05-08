@@ -1,7 +1,7 @@
 import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator,
-  TextInput, Alert, Modal, Platform,
+  TextInput, Alert, Modal, Platform, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -143,6 +143,7 @@ export default function ReportsScreen() {
   const { profile, hasPermission, planEntitlements } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const reportRequestRef = useRef(0);
   const productRequestRef = useRef(0);
   const itemRequestRef = useRef(0);
@@ -161,6 +162,8 @@ export default function ReportsScreen() {
   const [fastMovers, setFastMovers] = useState([]);
   const deferredItemSearch = useDeferredValue(itemSearch);
   const billingEntitlements = getPlanEntitlements(profile?.businesses);
+  const isDesktopWeb = Platform.OS === 'web' && width >= 960;
+  const buttonRowWrap = width < 560;
 
   useEffect(() => {
     fetchReport();
@@ -639,7 +642,8 @@ export default function ReportsScreen() {
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Offline mode: showing your last synced reports.</Text>
         </View>
       )}
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 + insets.bottom }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 + insets.bottom, alignItems: 'center' }}>
+        <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1180 : 760 }}>
         <View style={{ flexDirection: 'row', backgroundColor: colors.card, borderRadius: 12, padding: 4, marginBottom: 16 }}>
           {['today', 'week', 'month', 'year'].map((value) => (
             <TouchableOpacity key={value} style={{ flex: 1, paddingVertical: 9, borderRadius: 10, alignItems: 'center', backgroundColor: period === value ? colors.secondary : 'transparent' }} onPress={() => setPeriod(value)}>
@@ -648,12 +652,12 @@ export default function ReportsScreen() {
           ))}
         </View>
 
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
-          <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: billingEntitlements.canExportReports ? colors.success : colors.textLight, borderRadius: 12, height: 44, opacity: billingEntitlements.canExportReports ? 1 : 0.7 }} onPress={exportCSV} disabled={exporting}>
+        <View style={{ flexDirection: buttonRowWrap ? 'column' : 'row', gap: 10, marginBottom: 16 }}>
+          <TouchableOpacity style={{ flex: buttonRowWrap ? 0 : 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: billingEntitlements.canExportReports ? colors.success : colors.textLight, borderRadius: 12, height: 44, opacity: billingEntitlements.canExportReports ? 1 : 0.7 }} onPress={exportCSV} disabled={exporting}>
             {exporting ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="download" size={18} color="#fff" />}
             <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{exporting ? 'Exporting...' : billingEntitlements.canExportReports ? 'Export CSV' : 'Lifetime Only'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.card, borderRadius: 12, height: 44, borderWidth: 1.5, borderColor: colors.border }} onPress={() => setItemModal(true)}>
+          <TouchableOpacity style={{ flex: buttonRowWrap ? 0 : 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: colors.card, borderRadius: 12, height: 44, borderWidth: 1.5, borderColor: colors.border }} onPress={() => setItemModal(true)}>
             <Ionicons name="search" size={18} color={colors.secondary} />
             <Text style={{ color: colors.secondary, fontWeight: '700', fontSize: 13 }}>Item Report</Text>
           </TouchableOpacity>
@@ -795,11 +799,12 @@ export default function ReportsScreen() {
             ))}
           </>
         )}
+        </View>
       </ScrollView>
 
       <Modal visible={itemModal} transparent animationType="slide">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '80%', paddingBottom: 24 + insets.bottom }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: isDesktopWeb ? 'center' : 'flex-end', padding: isDesktopWeb ? 24 : 0 }}>
+          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderBottomLeftRadius: isDesktopWeb ? 24 : 0, borderBottomRightRadius: isDesktopWeb ? 24 : 0, padding: 24, maxHeight: '80%', paddingBottom: 24 + insets.bottom, width: '100%', maxWidth: isDesktopWeb ? 760 : undefined, alignSelf: isDesktopWeb ? 'center' : 'stretch' }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>Item Report</Text>
               <TouchableOpacity onPress={() => { setItemModal(false); setItemResult(null); setItemSearch(''); }}>
@@ -841,7 +846,7 @@ export default function ReportsScreen() {
                 ) : (
                   <>
                     <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 12 }}>{itemResult.name}</Text>
-                    <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+                    <View style={{ flexDirection: buttonRowWrap ? 'column' : 'row', gap: 10, marginBottom: 14 }}>
                       {[
                         { label: 'Units Sold', value: itemResult.totalQty, color: colors.secondary },
                         { label: 'Revenue', value: fmt(itemResult.totalRev), color: colors.warning },

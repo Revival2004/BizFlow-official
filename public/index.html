@@ -41,6 +41,22 @@
     <div id="root"></div>
     <script>
       (function () {
+        var searchParams = new URLSearchParams(window.location.search);
+        var fallbackPath = searchParams.get('__bf_path');
+
+        if (!fallbackPath) {
+          return;
+        }
+
+        var fallbackQuery = searchParams.get('__bf_query') || '';
+        var fallbackHash = searchParams.get('__bf_hash') || '';
+        var restoredPath = fallbackPath + fallbackQuery + fallbackHash;
+
+        window.history.replaceState(null, '', restoredPath);
+      })();
+    </script>
+    <script>
+      (function () {
         if (!('serviceWorker' in navigator)) {
           return;
         }

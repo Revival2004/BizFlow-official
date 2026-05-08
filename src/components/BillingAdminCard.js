@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Text, TouchableOpacity, View } from 'react-native';
-import * as ExpoLinking from 'expo-linking';
 import { supabase } from '../utils/supabase';
 import {
   BILLING_STATUSES,
@@ -11,6 +10,7 @@ import {
   normalizeBillingFeatures,
   planDurationLabel,
 } from '../utils/billing';
+import { copyText, openExternalUrl } from '../utils/web';
 
 export default function BillingAdminCard({ profile, colors, mode = 'embedded', onRefresh }) {
   const [plans, setPlans] = useState([]);
@@ -88,9 +88,9 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
     }
 
     try {
-      await ExpoLinking.openURL(authorizationUrl);
+      await openExternalUrl(authorizationUrl);
     } catch (_error) {
-      Alert.alert('Open Browser Failed', 'Copy the link later or try again from a device with a browser.');
+      Alert.alert('Open Browser Failed', 'Copy the checkout link and open it in your browser.');
     }
   };
 
@@ -173,6 +173,18 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
 
   const statusMeta = BILLING_STATUSES[summary?.billing_status || businessBilling.status] || BILLING_STATUSES.active;
   const accentColor = colors[statusMeta.tone] || colors.secondary;
+  const copyCheckoutLink = async () => {
+    if (!pendingCheckout?.authorizationUrl) {
+      return;
+    }
+
+    try {
+      await copyText(pendingCheckout.authorizationUrl);
+      Alert.alert('Copied', 'The Paystack checkout link is now in your clipboard.');
+    } catch (error) {
+      Alert.alert('Copy Failed', error.message || 'Could not copy the checkout link.');
+    }
+  };
 
   return (
     <View
@@ -302,6 +314,20 @@ export default function BillingAdminCard({ profile, colors, mode = 'embedded', o
                   onPress={() => openCheckout(pendingCheckout.authorizationUrl)}
                 >
                   <Text style={{ color: colors.secondary, fontWeight: '700' }}>Open Checkout</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    borderWidth: 1.5,
+                    borderColor: colors.border,
+                    borderRadius: 12,
+                    height: 44,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  onPress={copyCheckoutLink}
+                >
+                  <Text style={{ color: colors.text, fontWeight: '700' }}>Copy Link</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={{

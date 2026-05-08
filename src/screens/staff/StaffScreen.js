@@ -1,16 +1,16 @@
 import React, { startTransition, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
-  Modal, Alert, ActivityIndicator, ScrollView, Share,
+  Modal, Alert, ActivityIndicator, ScrollView, Platform, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as ExpoLinking from 'expo-linking';
 import { supabase } from '../../utils/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { COLORS, ROLE_PERMISSIONS } from '../../utils/constants';
 import { humanizeLabel } from '../../utils/data';
 import { useRealtimeRefresh } from '../../hooks/useRealtimeRefresh';
 import { getRemainingStaffSlots } from '../../utils/billing';
+import { copyText, openExternalUrl, shareText } from '../../utils/web';
 
 const AVAILABLE_ROLES = [
   { key: 'sales_manager', label: 'Sales Manager', desc: 'Can sell, view reports and profits', color: COLORS.secondary, icon: 'trending-up' },
@@ -21,6 +21,7 @@ const AVAILABLE_ROLES = [
 
 export default function StaffScreen() {
   const { profile, hasPermission, planEntitlements } = useAuth();
+  const { width } = useWindowDimensions();
   const fetchRequestRef = useRef(0);
   const inviteActionRef = useRef(false);
   const memberActionRef = useRef(false);
@@ -37,6 +38,7 @@ export default function StaffScreen() {
   const [editModal, setEditModal] = useState(false);
   const [editStaff, setEditStaff] = useState(null);
   const [inviteResult, setInviteResult] = useState(null);
+  const isDesktopWeb = Platform.OS === 'web' && width >= 900;
 
   useEffect(() => {
     if (!profile?.business_id) {
@@ -160,10 +162,14 @@ export default function StaffScreen() {
     ].filter(Boolean);
 
     try {
-      await Share.share({
+      const result = await shareText({
+        title: 'BizFlow Invitation',
         message: lines.join('\n\n'),
         url: inviteResult.webLink || inviteResult.appLink,
       });
+      if (result?.method === 'clipboard') {
+        Alert.alert('Copied', 'The invite details are now in your clipboard.');
+      }
     } catch (_error) {
       Alert.alert('Share Unavailable', 'Copy the invite link manually from the screen.');
     }
@@ -175,9 +181,18 @@ export default function StaffScreen() {
     }
 
     try {
-      await ExpoLinking.openURL(url);
+      await openExternalUrl(url);
     } catch (_error) {
       Alert.alert('Unable to Open Link', 'Copy the link manually from the screen.');
+    }
+  };
+
+  const copyInviteLink = async (url, label) => {
+    try {
+      await copyText(url);
+      Alert.alert('Copied', `${label} copied to your clipboard.`);
+    } catch (error) {
+      Alert.alert('Copy Failed', error.message || `Could not copy the ${label.toLowerCase()}.`);
     }
   };
 
@@ -413,7 +428,8 @@ export default function StaffScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.tabRow}>
+      <View style={[styles.contentWrap, isDesktopWeb && styles.contentWrapDesktop]}>
+      <View style={[styles.tabRow, isDesktopWeb && styles.tabRowDesktop]}>
         <TouchableOpacity style={[styles.tab, tab === 'staff' && styles.tabActive]} onPress={() => setTab('staff')}>
           <Ionicons name="people" size={16} color={tab === 'staff' ? COLORS.secondary : COLORS.textLight} />
           <Text style={[styles.tabText, tab === 'staff' && styles.tabTextActive]}>Staff ({activeStaffCount})</Text>
@@ -541,8 +557,8 @@ export default function StaffScreen() {
       )}
 
       <Modal visible={inviteModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+        <View style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}>
+          <View style={[styles.modalCard, isDesktopWeb && styles.modalCardDesktop]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Invite Team Member</Text>
               <TouchableOpacity onPress={() => setInviteModal(false)}><Ionicons name="close" size={24} color={COLORS.text} /></TouchableOpacity>
@@ -601,8 +617,8 @@ export default function StaffScreen() {
       </Modal>
 
       <Modal visible={editModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxHeight: '60%' }]}>
+        <View style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}>
+          <View style={[styles.modalCard, { maxHeight: '60%' }, isDesktopWeb && styles.modalCardDesktop]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Change Role</Text>
               <TouchableOpacity onPress={() => setEditModal(false)}><Ionicons name="close" size={24} color={COLORS.text} /></TouchableOpacity>
@@ -625,8 +641,8 @@ export default function StaffScreen() {
       </Modal>
 
       <Modal visible={Boolean(inviteResult)} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { maxHeight: '75%' }]}>
+        <View style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}>
+          <View style={[styles.modalCard, { maxHeight: '75%' }, isDesktopWeb && styles.modalCardDesktop]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {inviteResult?.delivery === 'failed' ? 'Invite Saved' : 'Share Invitation'}
@@ -657,12 +673,24 @@ export default function StaffScreen() {
                   >
                     <Text style={styles.linkActionText}>Open Web Link</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.linkActionBtn}
+                    onPress={() => copyInviteLink(inviteResult.webLink, 'Web link')}
+                  >
+                    <Text style={styles.linkActionText}>Copy Web Link</Text>
+                  </TouchableOpacity>
                 </View>
               ) : null}
 
               <View style={styles.linkCard}>
                 <Text style={styles.linkLabel}>App invite link</Text>
                 <Text selectable style={styles.linkValue}>{inviteResult?.appLink}</Text>
+                <TouchableOpacity
+                  style={styles.linkActionBtn}
+                  onPress={() => copyInviteLink(inviteResult?.appLink, 'App link')}
+                >
+                  <Text style={styles.linkActionText}>Copy App Link</Text>
+                </TouchableOpacity>
               </View>
 
               <TouchableOpacity style={styles.sendBtn} onPress={shareInviteResult}>
@@ -673,14 +701,18 @@ export default function StaffScreen() {
           </View>
         </View>
       </Modal>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
+  contentWrap: { flex: 1 },
+  contentWrapDesktop: { width: '100%', maxWidth: 1180, alignSelf: 'center' },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   tabRow: { flexDirection: 'row', padding: 12, gap: 8, alignItems: 'center' },
+  tabRowDesktop: { flexWrap: 'wrap' },
   tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, borderRadius: 10, backgroundColor: COLORS.white, borderWidth: 1.5, borderColor: COLORS.border },
   tabActive: { borderColor: COLORS.secondary, backgroundColor: COLORS.secondary + '10' },
   tabText: { fontSize: 12, fontWeight: '600', color: COLORS.textLight },
@@ -717,6 +749,8 @@ const styles = StyleSheet.create({
   emptyText: { color: COLORS.textLight, marginTop: 10, fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalCard: { backgroundColor: COLORS.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '90%' },
+  modalOverlayDesktop: { justifyContent: 'center', padding: 24 },
+  modalCardDesktop: { width: '100%', maxWidth: 760, alignSelf: 'center', borderRadius: 24 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
   modalTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text },
   formLabel: { fontSize: 13, fontWeight: '600', color: COLORS.text, marginBottom: 8 },

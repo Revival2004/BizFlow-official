@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, Alert, ScrollView, TextInput, ActivityIndicator, Switch } from 'react-native';
+import { View, Text, TouchableOpacity, Alert, ScrollView, TextInput, ActivityIndicator, Switch, Platform, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
@@ -14,6 +14,7 @@ export default function ProfileScreen() {
   const { profile, signOut, fetchProfile, hasPermission, isAdmin } = useAuth();
   const { colors, isDark, toggleTheme } = useTheme();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [editName, setEditName] = useState(false);
   const [name, setName] = useState(profile?.full_name || '');
   const [editBusinessName, setEditBusinessName] = useState(false);
@@ -218,6 +219,7 @@ export default function ProfileScreen() {
   const canEditBusinessName = isAdmin();
   const canManageBilling = hasPermission('manage_billing');
   const canManagePayments = hasPermission('manage_payments');
+  const isDesktopWeb = Platform.OS === 'web' && width >= 960;
 
   const Section = ({ title, children }) => (
     <View style={{ marginBottom: 16 }}>
@@ -247,7 +249,8 @@ export default function ProfileScreen() {
   );
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 32 + insets.bottom }}>
+    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 32 + insets.bottom, alignItems: 'center' }}>
+      <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1080 : 760 }}>
       <View style={{ backgroundColor: colors.card, borderRadius: 20, padding: 24, alignItems: 'center', marginBottom: 16 }}>
         <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
           <Text style={{ fontSize: 36, fontWeight: '800', color: '#fff' }}>{profile?.full_name?.charAt(0)?.toUpperCase()}</Text>
@@ -526,6 +529,7 @@ export default function ProfileScreen() {
         <Ionicons name="log-out-outline" size={20} color={colors.danger} />
         <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>Sign Out</Text>
       </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 }

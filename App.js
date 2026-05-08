@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/context/AuthContext';
@@ -22,6 +22,7 @@ function StartupSplash({ onFinish }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.96)).current;
   const lineOpacity = useRef(new Animated.Value(0)).current;
+  const useNativeDriver = Platform.OS !== 'web';
 
   useEffect(() => {
     const animation = Animated.sequence([
@@ -30,51 +31,51 @@ function StartupSplash({ onFinish }) {
           toValue: 1,
           duration: 850,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
+          useNativeDriver,
         }),
         Animated.timing(scale, {
           toValue: 1,
           duration: 850,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
+          useNativeDriver,
         }),
         Animated.timing(lineOpacity, {
           toValue: 1,
           duration: 620,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
+          useNativeDriver,
         }),
       ]),
       Animated.timing(opacity, {
         toValue: 0.28,
         duration: 520,
         easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
+        useNativeDriver,
       }),
       Animated.timing(opacity, {
         toValue: 1,
         duration: 420,
         easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
+        useNativeDriver,
       }),
       Animated.parallel([
         Animated.timing(opacity, {
           toValue: 0,
           duration: 700,
           easing: Easing.in(Easing.ease),
-          useNativeDriver: true,
+          useNativeDriver,
         }),
         Animated.timing(lineOpacity, {
           toValue: 0,
           duration: 500,
           easing: Easing.in(Easing.ease),
-          useNativeDriver: true,
+          useNativeDriver,
         }),
         Animated.timing(scale, {
           toValue: 1.04,
           duration: 700,
           easing: Easing.in(Easing.ease),
-          useNativeDriver: true,
+          useNativeDriver,
         }),
       ]),
     ]);
@@ -149,9 +150,13 @@ const styles = StyleSheet.create({
     fontSize: 54,
     fontWeight: '900',
     letterSpacing: 1.5,
-    textShadowColor: 'rgba(59, 130, 246, 0.18)',
-    textShadowOffset: { width: 0, height: 8 },
-    textShadowRadius: 18,
+    ...(Platform.OS === 'web'
+      ? {}
+      : {
+          textShadowColor: 'rgba(59, 130, 246, 0.18)',
+          textShadowOffset: { width: 0, height: 8 },
+          textShadowRadius: 18,
+        }),
   },
   splashWordAccent: {
     color: '#3B82F6',

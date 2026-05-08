@@ -115,7 +115,7 @@ export default function WebPwaBanner() {
   }
 
   return (
-    <View pointerEvents="box-none" style={styles.wrap}>
+    <View style={styles.wrap}>
       <View style={[styles.card, { backgroundColor: bannerTone.background, borderColor: bannerTone.border }]}>
         <View style={styles.copy}>
           <Text style={styles.eyebrow}>{bannerTone.label}</Text>
@@ -150,6 +150,7 @@ const styles = StyleSheet.create({
     left: 18,
     alignItems: 'flex-end',
     zIndex: 1200,
+    pointerEvents: 'box-none',
   },
   card: {
     width: '100%',

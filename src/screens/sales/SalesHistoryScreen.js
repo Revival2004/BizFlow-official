@@ -1,7 +1,7 @@
 import React, { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, ActivityIndicator, Modal, ScrollView, Alert,
+  TextInput, ActivityIndicator, Modal, ScrollView, Alert, Platform, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import NetInfo from '@react-native-community/netinfo';
@@ -20,6 +20,7 @@ const toTimestamp = (value) => {
 
 export default function SalesHistoryScreen() {
   const { profile, hasPermission } = useAuth();
+  const { width } = useWindowDimensions();
   const salesRequestRef = useRef(0);
   const saleItemsRequestRef = useRef(0);
   const voidingRef = useRef(false);
@@ -32,6 +33,8 @@ export default function SalesHistoryScreen() {
   const [loadingItems, setLoadingItems] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const deferredSearch = useDeferredValue(search);
+  const isDesktopWeb = Platform.OS === 'web' && width >= 960;
+  const stackHeader = width < 640;
 
   useEffect(() => {
     if (!profile?.business_id) {
@@ -324,7 +327,7 @@ export default function SalesHistoryScreen() {
           <Text style={styles.offlineBannerText}>Offline mode: showing your last synced sales history and any unsynced local sales.</Text>
         </View>
       )}
-      <View style={styles.header}>
+      <View style={[styles.header, stackHeader && styles.headerStack, isDesktopWeb && styles.contentWrap]}>
         <View style={styles.searchRow}>
           <Ionicons name="search" size={18} color={COLORS.textLight} />
           <TextInput
@@ -340,7 +343,7 @@ export default function SalesHistoryScreen() {
         </View>
       </View>
 
-      <View style={styles.filterRow}>
+      <View style={[styles.filterRow, stackHeader && styles.filterRowWrap, isDesktopWeb && styles.contentWrap]}>
         {['all', 'today', 'week', 'month'].map((value) => (
           <TouchableOpacity key={value} style={[styles.filterBtn, filter === value && styles.filterBtnActive]} onPress={() => setFilter(value)}>
             <Text style={[styles.filterBtnText, filter === value && styles.filterBtnTextActive]}>{value.charAt(0).toUpperCase() + value.slice(1)}</Text>
@@ -354,24 +357,24 @@ export default function SalesHistoryScreen() {
         <FlatList
           data={filteredSales}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, isDesktopWeb && styles.listDesktop]}
           initialNumToRender={12}
           maxToRenderPerBatch={12}
           windowSize={8}
           removeClippedSubviews
           keyboardShouldPersistTaps="handled"
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.saleCard} onPress={() => viewSale(item)}>
+            <TouchableOpacity style={[styles.saleCard, isDesktopWeb && styles.saleCardDesktop, stackHeader && styles.saleCardStack]} onPress={() => viewSale(item)}>
               <View style={styles.saleCardLeft}>
                 <Text style={styles.saleRef}>{cleanText(item.reference_number || '')}</Text>
                 <Text style={styles.saleCustomer}>{cleanText(item.customer_name || 'Walk-in Customer')}</Text>
                 {item.payment_payer_name ? (
-                  <Text style={styles.saleMeta}>{cleanText(item.payment_payer_name || '')}{item.payment_reference ? ` · ${cleanText(item.payment_reference || '')}` : ''}</Text>
+                  <Text style={styles.saleMeta}>{[cleanText(item.payment_payer_name || ''), item.payment_reference ? cleanText(item.payment_reference || '') : null].filter(Boolean).join(' | ')}</Text>
                 ) : null}
                 <Text style={styles.saleCashier}>By: {cleanText(item.sellerName || 'Staff')}</Text>
                 <Text style={styles.saleDate}>{new Date(item.created_at).toLocaleString()}</Text>
               </View>
-              <View style={styles.saleCardRight}>
+              <View style={[styles.saleCardRight, stackHeader && styles.saleCardRightStack]}>
                 <Text style={styles.saleAmount}>{fmt(item.total_amount)}</Text>
                 <View style={styles.methodBadge}>
                   <Ionicons name={paymentIcon(item.payment_method)} size={12} color={COLORS.textLight} />
@@ -393,8 +396,8 @@ export default function SalesHistoryScreen() {
       )}
 
       <Modal visible={!!selectedSale} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+        <View style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}>
+          <View style={[styles.modalCard, isDesktopWeb && styles.modalCardDesktop]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{cleanText(selectedSale?.reference_number || '')}</Text>
               <TouchableOpacity onPress={() => setSelectedSale(null)}>
@@ -477,17 +480,23 @@ const styles = StyleSheet.create({
   offlineBanner: { backgroundColor: '#F59F00', padding: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   offlineBannerText: { color: '#fff', fontWeight: '700', fontSize: 13, flex: 1, textAlign: 'center' },
   header: { flexDirection: 'row', padding: 12, gap: 10, alignItems: 'center' },
+  headerStack: { flexDirection: 'column', alignItems: 'stretch' },
+  contentWrap: { width: '100%', maxWidth: 1180, alignSelf: 'center' },
   searchRow: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.white, borderRadius: 10, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: COLORS.border },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 14, color: COLORS.text },
   totalBadge: { backgroundColor: COLORS.secondary, borderRadius: 10, paddingHorizontal: 12, height: 42, justifyContent: 'center' },
   totalBadgeText: { color: COLORS.white, fontWeight: '800', fontSize: 12 },
   filterRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 8, marginBottom: 8 },
+  filterRowWrap: { flexWrap: 'wrap' },
   filterBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border },
   filterBtnActive: { backgroundColor: COLORS.secondary, borderColor: COLORS.secondary },
   filterBtnText: { fontSize: 12, fontWeight: '600', color: COLORS.textLight },
   filterBtnTextActive: { color: COLORS.white },
   list: { padding: 12, paddingTop: 0 },
+  listDesktop: { alignItems: 'center' },
   saleCard: { backgroundColor: COLORS.white, borderRadius: 14, padding: 14, marginBottom: 8, flexDirection: 'row', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 },
+  saleCardDesktop: { width: '100%', maxWidth: 1180 },
+  saleCardStack: { flexDirection: 'column', gap: 10 },
   saleCardLeft: { flex: 1 },
   saleRef: { fontSize: 14, fontWeight: '700', color: COLORS.secondary },
   saleCustomer: { fontSize: 13, color: COLORS.text, marginTop: 2 },
@@ -495,6 +504,7 @@ const styles = StyleSheet.create({
   saleCashier: { fontSize: 11, color: COLORS.textLight },
   saleDate: { fontSize: 11, color: COLORS.textLight, marginTop: 2 },
   saleCardRight: { alignItems: 'flex-end' },
+  saleCardRightStack: { alignItems: 'flex-start' },
   saleAmount: { fontSize: 16, fontWeight: '800', color: COLORS.text },
   methodBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4 },
   methodText: { fontSize: 10, color: COLORS.textLight, textTransform: 'uppercase' },
@@ -503,7 +513,9 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', padding: 48 },
   emptyText: { color: COLORS.textLight, marginTop: 10, fontSize: 15 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalOverlayDesktop: { justifyContent: 'center', padding: 24 },
   modalCard: { backgroundColor: COLORS.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, maxHeight: '80%' },
+  modalCardDesktop: { width: '100%', maxWidth: 760, alignSelf: 'center', borderRadius: 24 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
   modalTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text },
   saleDetailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.border },

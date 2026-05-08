@@ -2,7 +2,7 @@ import React, { startTransition, useDeferredValue, useEffect, useRef, useState }
 import {
   View, Text, FlatList, TouchableOpacity,
   TextInput, Alert, Modal, ActivityIndicator, ScrollView,
-  Animated, Platform,
+  Animated, Platform, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -25,6 +25,7 @@ import { invokeProcessSale } from '../../utils/sales';
 
 function LowStockToast({ message, trigger }) {
   const opacity = useRef(new Animated.Value(0)).current;
+  const useNativeDriver = Platform.OS !== 'web';
 
   useEffect(() => {
     if (!trigger || !message) {
@@ -33,11 +34,11 @@ function LowStockToast({ message, trigger }) {
 
     opacity.setValue(0);
     Animated.sequence([
-      Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver }),
       Animated.delay(2500),
-      Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver }),
     ]).start();
-  }, [message, opacity, trigger]);
+  }, [message, opacity, trigger, useNativeDriver]);
 
   return (
     <Animated.View
@@ -74,6 +75,7 @@ export default function NewSaleScreen({ navigation }) {
   const { profile, hasPermission, planEntitlements } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const syncInProgressRef = useRef(false);
   const processingRef = useRef(false);
@@ -109,6 +111,10 @@ export default function NewSaleScreen({ navigation }) {
   const canUseBarcodeScanner = Boolean(planEntitlements?.canUseBarcodeScanner);
   const usesManualDigitalEvidence = paymentMethod === 'card' || paymentMethod === 'transfer';
   const parsedPaymentMessage = parsePaymentMessage(paymentMessage);
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isWideLayout = width >= 980;
+  const stackPaymentFields = width < 640;
+  const productGridColumns = width >= 1360 ? 3 : 2;
   const normalizeProductCode = (value) => cleanText(value || '').toLowerCase().trim();
   const isLikelyCodeInput = (value) => {
     const normalized = normalizeProductCode(value);
@@ -800,7 +806,7 @@ export default function NewSaleScreen({ navigation }) {
   }
 
   return (
-    <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.bg }}>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       {isOffline && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: '#F59F00', padding: 6, alignItems: 'center', zIndex: 10 }}>
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
@@ -809,7 +815,9 @@ export default function NewSaleScreen({ navigation }) {
         </View>
       )}
 
-      <View style={{ flex: 1.2, padding: 12, paddingTop: isOffline ? 36 : 12 }}>
+      <View style={{ flex: 1, width: '100%', maxWidth: isDesktopWeb ? 1420 : undefined, alignSelf: 'center' }}>
+      <View style={{ flex: 1, flexDirection: isWideLayout ? 'row' : 'column', gap: 12, padding: 12, paddingTop: isOffline ? 36 : 12 }}>
+      <View style={{ flex: isWideLayout ? 1.25 : 0, minHeight: isWideLayout ? undefined : 320 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.card, borderRadius: 10, paddingHorizontal: 12, marginBottom: 10, borderWidth: 1, borderColor: colors.border, height: 42 }}>
           <Ionicons name="search" size={18} color={colors.textLight} />
             <TextInput
@@ -834,22 +842,25 @@ export default function NewSaleScreen({ navigation }) {
           </TouchableOpacity>
         </View>
         <FlatList
+          key={`grid-${productGridColumns}`}
           data={filtered}
           keyExtractor={(item) => item.id}
-          numColumns={2}
+          numColumns={productGridColumns}
           initialNumToRender={12}
           maxToRenderPerBatch={12}
           windowSize={8}
           removeClippedSubviews
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          columnWrapperStyle={{ gap: 8, marginBottom: 8 }}
+          contentContainerStyle={{ paddingBottom: isWideLayout ? 12 : 24 + insets.bottom }}
+          columnWrapperStyle={productGridColumns > 1 ? { gap: 8, marginBottom: 8 } : undefined}
           renderItem={({ item }) => {
             const disabled = cartLocked || item.quantity === 0;
             return (
               <TouchableOpacity
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   backgroundColor: colors.card,
                   borderRadius: 12,
                   padding: 12,
@@ -876,7 +887,7 @@ export default function NewSaleScreen({ navigation }) {
         />
       </View>
 
-      <View style={{ flex: 1, backgroundColor: colors.card, borderLeftWidth: 1, borderLeftColor: colors.border, padding: 12, paddingBottom: 12 + insets.bottom }}>
+      <View style={{ flex: 1, backgroundColor: colors.card, borderLeftWidth: isWideLayout ? 1 : 0, borderTopWidth: isWideLayout ? 0 : 1, borderLeftColor: colors.border, borderTopColor: colors.border, borderRadius: isWideLayout ? 18 : 20, padding: 12, paddingBottom: 12 + insets.bottom, minHeight: isWideLayout ? undefined : 360 }}>
         <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 8 }}>
           Cart ({cart.length})
         </Text>
@@ -899,7 +910,7 @@ export default function NewSaleScreen({ navigation }) {
                 </Text>
               </View>
               <TouchableOpacity
-                style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.card }}
+                style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: colors.bg }}
                 onPress={() => checkPendingMpesaStatus(pendingMpesa.id)}
               >
                 <Text style={{ color: colors.secondary, fontWeight: '700', fontSize: 12 }}>Refresh</Text>
@@ -978,10 +989,12 @@ export default function NewSaleScreen({ navigation }) {
           </TouchableOpacity>
         </View>
       </View>
+      </View>
+      </View>
 
       <Modal visible={paymentModal} transparent animationType="slide">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 28, paddingBottom: 28 + insets.bottom }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: isDesktopWeb ? 'center' : 'flex-end', padding: isDesktopWeb ? 24 : 0 }}>
+          <View style={{ backgroundColor: colors.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderBottomLeftRadius: isDesktopWeb ? 24 : 0, borderBottomRightRadius: isDesktopWeb ? 24 : 0, padding: 28, paddingBottom: 28 + insets.bottom, width: '100%', maxWidth: isDesktopWeb ? 860 : undefined, alignSelf: isDesktopWeb ? 'center' : 'stretch' }}>
             <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, textAlign: 'center' }}>
               Complete Sale
             </Text>
@@ -999,7 +1012,7 @@ export default function NewSaleScreen({ navigation }) {
                   <TouchableOpacity
                     key={method.key}
                     style={{
-                      width: '47.5%',
+                      width: stackPaymentFields ? '100%' : '48%',
                       borderWidth: 2,
                       borderColor: paymentMethod === method.key ? colors.secondary : colors.border,
                       borderRadius: 10,
@@ -1115,7 +1128,7 @@ export default function NewSaleScreen({ navigation }) {
                   <Text style={{ color: colors.secondary, fontWeight: '700', fontSize: 12 }}>Read Message</Text>
                 </TouchableOpacity>
 
-                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                <View style={{ flexDirection: stackPaymentFields ? 'column' : 'row', gap: 10, marginBottom: 10 }}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 5 }}>Payer Name</Text>
                     <TextInput
@@ -1147,15 +1160,15 @@ export default function NewSaleScreen({ navigation }) {
               </>
             )}
 
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
+            <View style={{ flexDirection: stackPaymentFields ? 'column' : 'row', gap: 12, marginTop: 8 }}>
               <TouchableOpacity
-                style={{ flex: 1, borderWidth: 1.5, borderColor: colors.border, borderRadius: 12, height: 50, alignItems: 'center', justifyContent: 'center' }}
+                style={{ flex: stackPaymentFields ? 0 : 1, borderWidth: 1.5, borderColor: colors.border, borderRadius: 12, height: 50, alignItems: 'center', justifyContent: 'center' }}
                 onPress={() => setPaymentModal(false)}
               >
                 <Text style={{ color: colors.text, fontWeight: '600' }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={{ flex: 2, backgroundColor: colors.success, borderRadius: 12, height: 50, alignItems: 'center', justifyContent: 'center' }}
+                style={{ flex: stackPaymentFields ? 0 : 2, backgroundColor: colors.success, borderRadius: 12, height: 50, alignItems: 'center', justifyContent: 'center' }}
                 onPress={processSale}
                 disabled={processing || (paymentMethod === 'mpesa' && !mpesaEnabled)}
               >

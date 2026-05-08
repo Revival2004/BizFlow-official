@@ -2,6 +2,7 @@ import React, { useDeferredValue, useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity,
   RefreshControl, ActivityIndicator, Modal, TextInput, Alert,
+  Platform, useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,6 +21,7 @@ export default function DashboardScreen({ navigation }) {
   const { profile, hasPermission } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [stats, setStats] = useState(null);
   const [recentSales, setRecentSales] = useState([]);
   const [products, setProducts] = useState([]);
@@ -35,6 +37,8 @@ export default function DashboardScreen({ navigation }) {
   const [dayEnded, setDayEnded] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const deferredStockLookup = useDeferredValue(stockLookup);
+  const isDesktopWeb = Platform.OS === 'web' && width >= 960;
+  const cardsWrap = width < 760;
   const openSecondaryScreen = (routeName) => {
     const parentNavigation = navigation.getParent?.();
     if (parentNavigation?.navigate) {
@@ -278,7 +282,7 @@ export default function DashboardScreen({ navigation }) {
       )}
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 24 + insets.bottom }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 24 + insets.bottom, alignItems: 'center' }}
         refreshControl={(
           <RefreshControl
             refreshing={refreshing}
@@ -290,6 +294,7 @@ export default function DashboardScreen({ navigation }) {
           />
         )}
       >
+        <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1200 : 760 }}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <View>
             <Text style={{ fontSize: 13, color: colors.textLight }}>Good {getGreeting()}</Text>
@@ -300,7 +305,7 @@ export default function DashboardScreen({ navigation }) {
           </View>
         </View>
 
-        <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
+        <View style={{ flexDirection: cardsWrap ? 'column' : 'row', gap: 12, marginBottom: 16 }}>
           <View
             style={{
               flex: 1,
@@ -426,7 +431,7 @@ export default function DashboardScreen({ navigation }) {
                           <View style={{ flex: 1 }}>
                             <Text style={{ fontSize: 14, fontWeight: '800', color: colors.text }}>{cleanText(item.name || '')}</Text>
                             <Text style={{ fontSize: 11, color: colors.textLight, marginTop: 4 }}>
-                              {[item.sku ? `SKU ${cleanText(item.sku || '')}` : null, item.barcode ? `Code ${cleanText(item.barcode || '')}` : null].filter(Boolean).join(' • ') || 'No code saved'}
+                              {[item.sku ? `SKU ${cleanText(item.sku || '')}` : null, item.barcode ? `Code ${cleanText(item.barcode || '')}` : null].filter(Boolean).join(' | ') || 'No code saved'}
                             </Text>
                           </View>
                           <View style={{ backgroundColor: statusColor + '18', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
@@ -434,7 +439,7 @@ export default function DashboardScreen({ navigation }) {
                           </View>
                         </View>
 
-                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                        <View style={{ flexDirection: cardsWrap ? 'column' : 'row', gap: 10, marginTop: 12 }}>
                           <View style={{ flex: 1, backgroundColor: colors.card, borderRadius: 12, padding: 10 }}>
                             <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textLight, marginBottom: 4 }}>Stock Left</Text>
                             <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>{Number(item.quantity || 0)} {cleanText(item.unit || 'pcs')}</Text>
@@ -454,7 +459,7 @@ export default function DashboardScreen({ navigation }) {
         )}
 
         <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 10 }}>Quick Actions</Text>
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 14 }}>
+        <View style={{ flexDirection: cardsWrap ? 'column' : 'row', gap: 10, marginBottom: 14 }}>
           {hasPermission('create_sale') && (
             <TouchableOpacity style={{ flex: 1, backgroundColor: colors.secondary, borderRadius: 16, padding: 14, alignItems: 'center', gap: 6, elevation: 3 }} onPress={() => navigation.navigate('Sales', { screen: 'NewSale' })}>
               <Ionicons name="add-circle" size={26} color="#fff" />
@@ -518,7 +523,7 @@ export default function DashboardScreen({ navigation }) {
                     </View>
                   </View>
 
-                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                  <View style={{ flexDirection: cardsWrap ? 'column' : 'row', gap: 10, marginTop: 12 }}>
                     <View style={{ flex: 1, backgroundColor: colors.bg, borderRadius: 12, padding: 10 }}>
                       <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textLight, marginBottom: 4 }}>Revenue</Text>
                       <Text style={{ fontSize: 13, fontWeight: '800', color: colors.secondary }}>{fmt(item.revenue)}</Text>
@@ -555,6 +560,7 @@ export default function DashboardScreen({ navigation }) {
             </View>
           </View>
         ))}
+        </View>
       </ScrollView>
 
       <Modal visible={targetModal} transparent animationType="fade">
