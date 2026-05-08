@@ -57,7 +57,31 @@
     </script>
     <script>
       (function () {
+        var isLocalHost =
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1' ||
+          window.location.hostname === '[::1]';
+
         if (!('serviceWorker' in navigator)) {
+          return;
+        }
+
+        if (isLocalHost) {
+          window.addEventListener('load', function () {
+            navigator.serviceWorker.getRegistrations().then(function (registrations) {
+              registrations.forEach(function (registration) {
+                registration.unregister();
+              });
+            });
+
+            if (window.caches && window.caches.keys) {
+              window.caches.keys().then(function (keys) {
+                keys.forEach(function (key) {
+                  window.caches.delete(key);
+                });
+              });
+            }
+          });
           return;
         }
 
