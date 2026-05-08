@@ -233,6 +233,12 @@ export default function ProfileScreen() {
     canManagePayments ? { key: 'payments', label: 'M-Pesa' } : null,
     { key: 'account', label: 'Account' },
   ].filter(Boolean);
+  const sectionAnchors = {
+    business: 'settings-business',
+    billing: 'settings-billing',
+    payments: 'settings-payments',
+    account: 'settings-account',
+  };
 
   const Section = ({ title, children }) => (
     <View style={{ marginBottom: 16 }}>
@@ -273,6 +279,17 @@ export default function ProfileScreen() {
   };
 
   const scrollToSection = (key) => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const anchorId = sectionAnchors[key];
+      const node = anchorId
+        ? document.getElementById(anchorId) || document.querySelector(`[data-nativeid="${anchorId}"]`)
+        : null;
+      if (node?.scrollIntoView) {
+        node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+    }
+
     const target = sectionOffsets[key];
     if (typeof target !== 'number') {
       return;
@@ -365,7 +382,7 @@ export default function ProfileScreen() {
   );
 
   const businessSection = (
-    <View onLayout={rememberSectionOffset('business')}>
+    <View nativeID={sectionAnchors.business} onLayout={rememberSectionOffset('business')}>
       <Section title="Business">
       {!editBusinessName ? (
         <>
@@ -421,7 +438,7 @@ export default function ProfileScreen() {
   );
 
   const billingSection = canManageBilling ? (
-    <View onLayout={rememberSectionOffset('billing')}>
+    <View nativeID={sectionAnchors.billing} onLayout={rememberSectionOffset('billing')}>
       <Section title="BizFlow Billing">
         <View style={{ padding: 16 }}>
           <BillingAdminCard
@@ -435,7 +452,7 @@ export default function ProfileScreen() {
   ) : null;
 
   const paymentsSection = canManagePayments ? (
-    <View onLayout={rememberSectionOffset('payments')}>
+    <View nativeID={sectionAnchors.payments} onLayout={rememberSectionOffset('payments')}>
       <Section title="Payments">
         <View style={{ padding: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -584,7 +601,7 @@ export default function ProfileScreen() {
   );
 
   const accountSection = (
-    <View onLayout={rememberSectionOffset('account')}>
+    <View nativeID={sectionAnchors.account} onLayout={rememberSectionOffset('account')}>
       <Section title="Account">
         <Row icon="calendar-outline" label="Joined" value={profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'} />
         <Row icon="checkmark-circle-outline" label="Status" value={profile?.status || 'active'} />
