@@ -18,7 +18,7 @@ const toTimestamp = (value) => {
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 };
 
-export default function SalesHistoryScreen() {
+export default function SalesHistoryScreen({ navigation }) {
   const { profile, hasPermission } = useAuth();
   const { width } = useWindowDimensions();
   const salesRequestRef = useRef(0);
@@ -338,8 +338,17 @@ export default function SalesHistoryScreen() {
             placeholderTextColor={COLORS.textLight}
           />
         </View>
-        <View style={styles.totalBadge}>
-          <Text style={styles.totalBadgeText}>{fmt(totalRevenue)}</Text>
+        <View style={[styles.headerActions, stackHeader && styles.headerActionsStack]}>
+          <TouchableOpacity
+            style={styles.newSaleBtn}
+            onPress={() => navigation.navigate('NewSale')}
+          >
+            <Ionicons name="add-circle-outline" size={16} color={COLORS.white} />
+            <Text style={styles.newSaleBtnText}>New Sale</Text>
+          </TouchableOpacity>
+          <View style={styles.totalBadge}>
+            <Text style={styles.totalBadgeText}>{fmt(totalRevenue)}</Text>
+          </View>
         </View>
       </View>
 
@@ -484,6 +493,10 @@ const styles = StyleSheet.create({
   contentWrap: { width: '100%', maxWidth: 1180, alignSelf: 'center' },
   searchRow: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.white, borderRadius: 10, paddingHorizontal: 12, height: 42, borderWidth: 1, borderColor: COLORS.border },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 14, color: COLORS.text },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerActionsStack: { width: '100%' },
+  newSaleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: COLORS.secondary, borderRadius: 10, paddingHorizontal: 14, height: 42 },
+  newSaleBtnText: { color: COLORS.white, fontSize: 12, fontWeight: '800' },
   totalBadge: { backgroundColor: COLORS.secondary, borderRadius: 10, paddingHorizontal: 12, height: 42, justifyContent: 'center' },
   totalBadgeText: { color: COLORS.white, fontWeight: '800', fontSize: 12 },
   filterRow: { flexDirection: 'row', paddingHorizontal: 12, gap: 8, marginBottom: 8 },

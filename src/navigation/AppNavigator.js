@@ -33,6 +33,24 @@ const linking = {
   prefixes: [prefix, 'bizflow://'],
   config: {
     screens: {
+      MainTabs: {
+        screens: {
+          Dashboard: '',
+          Sales: {
+            path: 'sales',
+            screens: {
+              SalesHistory: '',
+              NewSale: 'new',
+            },
+          },
+          Stock: 'stock',
+          Reports: 'reports',
+        },
+      },
+      Staff: 'staff',
+      Onboardings: 'onboardings',
+      Profile: 'settings',
+      BillingGate: 'billing',
       Auth: {
         screens: {
           Register: {

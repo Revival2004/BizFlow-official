@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Alert, ScrollView, TextInput, ActivityIndicator, Switch, Platform, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +15,7 @@ export default function ProfileScreen() {
   const { colors, isDark, toggleTheme } = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const scrollViewRef = useRef(null);
   const [editName, setEditName] = useState(false);
   const [name, setName] = useState(profile?.full_name || '');
   const [editBusinessName, setEditBusinessName] = useState(false);
@@ -27,6 +28,7 @@ export default function ProfileScreen() {
   const [paymentSettingsLoading, setPaymentSettingsLoading] = useState(false);
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentSummary, setPaymentSummary] = useState(null);
+  const [sectionOffsets, setSectionOffsets] = useState({});
   const [paymentForm, setPaymentForm] = useState({
     is_enabled: false,
     environment: 'sandbox',
@@ -220,6 +222,17 @@ export default function ProfileScreen() {
   const canManageBilling = hasPermission('manage_billing');
   const canManagePayments = hasPermission('manage_payments');
   const isDesktopWeb = Platform.OS === 'web' && width >= 960;
+  const desktopColumns = isDesktopWeb ? {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 18,
+  } : null;
+  const quickJumpItems = [
+    { key: 'business', label: 'Business' },
+    canManageBilling ? { key: 'billing', label: 'Billing' } : null,
+    canManagePayments ? { key: 'payments', label: 'M-Pesa' } : null,
+    { key: 'account', label: 'Account' },
+  ].filter(Boolean);
 
   const Section = ({ title, children }) => (
     <View style={{ marginBottom: 16 }}>
@@ -248,287 +261,380 @@ export default function ProfileScreen() {
     </TouchableOpacity>
   );
 
-  return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 32 + insets.bottom, alignItems: 'center' }}>
-      <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1080 : 760 }}>
-      <View style={{ backgroundColor: colors.card, borderRadius: 20, padding: 24, alignItems: 'center', marginBottom: 16 }}>
-        <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-          <Text style={{ fontSize: 36, fontWeight: '800', color: '#fff' }}>{profile?.full_name?.charAt(0)?.toUpperCase()}</Text>
-        </View>
+  const rememberSectionOffset = (key) => (event) => {
+    const nextY = event?.nativeEvent?.layout?.y;
+    if (typeof nextY !== 'number') {
+      return;
+    }
 
-        {editName ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <TextInput style={{ fontSize: 18, fontWeight: '700', borderBottomWidth: 2, borderBottomColor: colors.secondary, minWidth: 150, textAlign: 'center', color: colors.text }} value={name} onChangeText={setName} autoFocus />
-            <TouchableOpacity onPress={saveProfile} disabled={saving}>
-              {saving ? <ActivityIndicator color={colors.secondary} /> : <Ionicons name="checkmark-circle" size={28} color={colors.success} />}
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setEditName(false); setName(profile?.full_name || ''); }}>
-              <Ionicons name="close-circle" size={28} color={colors.danger} />
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }} onPress={() => setEditName(true)}>
-            <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{profile?.full_name}</Text>
-            <Ionicons name="pencil" size={14} color={colors.textLight} />
-          </TouchableOpacity>
-        )}
+    setSectionOffsets((current) => (
+      current[key] === nextY ? current : { ...current, [key]: nextY }
+    ));
+  };
 
-        <Text style={{ fontSize: 14, color: colors.textLight, marginTop: 4 }}>{profile?.email}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.secondary + '15', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, marginTop: 10 }}>
-          <Ionicons name="shield-checkmark" size={13} color={colors.secondary} />
-          <Text style={{ fontSize: 12, fontWeight: '700', color: colors.secondary }}>{profile?.roles?.name?.replace(/_/g, ' ').toUpperCase()}</Text>
-        </View>
+  const scrollToSection = (key) => {
+    const target = sectionOffsets[key];
+    if (typeof target !== 'number') {
+      return;
+    }
+
+    scrollViewRef.current?.scrollTo?.({
+      y: Math.max(target - 12, 0),
+      animated: true,
+    });
+  };
+
+  const profileHero = (
+    <View style={{ backgroundColor: colors.card, borderRadius: 20, padding: 24, alignItems: 'center', marginBottom: 16 }}>
+      <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+        <Text style={{ fontSize: 36, fontWeight: '800', color: '#fff' }}>{profile?.full_name?.charAt(0)?.toUpperCase()}</Text>
       </View>
 
-      <Section title="Appearance">
-        <Row
-          icon={isDark ? 'moon' : 'sunny'}
-          label="Dark Mode"
-          value={isDark ? 'Dark theme active' : 'Light theme active'}
-          rightEl={<Switch value={isDark} onValueChange={toggleTheme} trackColor={{ false: colors.border, true: colors.secondary }} thumbColor="#fff" />}
-        />
-      </Section>
+      {editName ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <TextInput style={{ fontSize: 18, fontWeight: '700', borderBottomWidth: 2, borderBottomColor: colors.secondary, minWidth: 150, textAlign: 'center', color: colors.text }} value={name} onChangeText={setName} autoFocus />
+          <TouchableOpacity onPress={saveProfile} disabled={saving}>
+            {saving ? <ActivityIndicator color={colors.secondary} /> : <Ionicons name="checkmark-circle" size={28} color={colors.success} />}
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => { setEditName(false); setName(profile?.full_name || ''); }}>
+            <Ionicons name="close-circle" size={28} color={colors.danger} />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }} onPress={() => setEditName(true)}>
+          <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{profile?.full_name}</Text>
+          <Ionicons name="pencil" size={14} color={colors.textLight} />
+        </TouchableOpacity>
+      )}
 
-      <Section title="Security">
-        {!changingPass ? (
-          <Row icon="lock-closed-outline" label="Change Password" onPress={() => setChangingPass(true)} />
-        ) : (
-          <View style={{ padding: 16 }}>
-            <TextInput style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 10 }} placeholder="New password" value={newPass} onChangeText={setNewPass} secureTextEntry placeholderTextColor={colors.textLight} />
-            <TextInput style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 12 }} placeholder="Confirm new password" value={confirmPass} onChangeText={setConfirmPass} secureTextEntry placeholderTextColor={colors.textLight} />
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity style={{ flex: 1, borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }} onPress={() => { setChangingPass(false); setNewPass(''); setConfirmPass(''); }}>
-                <Text style={{ color: colors.textLight, fontWeight: '600' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={{ flex: 2, backgroundColor: colors.secondary, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }} onPress={changePassword} disabled={saving}>
-                {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Update Password</Text>}
-              </TouchableOpacity>
-            </View>
+      <Text style={{ fontSize: 14, color: colors.textLight, marginTop: 4 }}>{profile?.email}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.secondary + '15', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, marginTop: 10 }}>
+        <Ionicons name="shield-checkmark" size={13} color={colors.secondary} />
+        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.secondary }}>{profile?.roles?.name?.replace(/_/g, ' ').toUpperCase()}</Text>
+      </View>
+    </View>
+  );
+
+  const quickJumpBar = quickJumpItems.length > 1 ? (
+    <View style={{ marginBottom: 16 }}>
+      <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 8, paddingLeft: 4, letterSpacing: 0.5, textTransform: 'uppercase' }}>Quick Jump</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 16 }}>
+        {quickJumpItems.map((item) => (
+          <TouchableOpacity
+            key={item.key}
+            style={{ height: 40, borderRadius: 999, paddingHorizontal: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }}
+            onPress={() => scrollToSection(item.key)}
+          >
+            <Text style={{ color: colors.secondary, fontWeight: '800', fontSize: 12 }}>{item.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  ) : null;
+
+  const appearanceSection = (
+    <Section title="Appearance">
+      <Row
+        icon={isDark ? 'moon' : 'sunny'}
+        label="Dark Mode"
+        value={isDark ? 'Dark theme active' : 'Light theme active'}
+        rightEl={<Switch value={isDark} onValueChange={toggleTheme} trackColor={{ false: colors.border, true: colors.secondary }} thumbColor="#fff" />}
+      />
+    </Section>
+  );
+
+  const securitySection = (
+    <Section title="Security">
+      {!changingPass ? (
+        <Row icon="lock-closed-outline" label="Change Password" onPress={() => setChangingPass(true)} />
+      ) : (
+        <View style={{ padding: 16 }}>
+          <TextInput style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 10 }} placeholder="New password" value={newPass} onChangeText={setNewPass} secureTextEntry placeholderTextColor={colors.textLight} />
+          <TextInput style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 12 }} placeholder="Confirm new password" value={confirmPass} onChangeText={setConfirmPass} secureTextEntry placeholderTextColor={colors.textLight} />
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity style={{ flex: 1, borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }} onPress={() => { setChangingPass(false); setNewPass(''); setConfirmPass(''); }}>
+              <Text style={{ color: colors.textLight, fontWeight: '600' }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={{ flex: 2, backgroundColor: colors.secondary, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }} onPress={changePassword} disabled={saving}>
+              {saving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Update Password</Text>}
+            </TouchableOpacity>
           </View>
-        )}
-      </Section>
+        </View>
+      )}
+    </Section>
+  );
 
+  const businessSection = (
+    <View onLayout={rememberSectionOffset('business')}>
       <Section title="Business">
-        {!editBusinessName ? (
-          <>
-            <Row
-              icon="business-outline"
-              label="Business Name"
-              value={teamBusinessName}
-              onPress={canEditBusinessName ? () => setEditBusinessName(true) : undefined}
-            />
-            {canEditBusinessName && (
-              <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
-                <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-                  This is the name your team sees in BizFlow and invites.
-                </Text>
-              </View>
-            )}
-          </>
-        ) : (
-          <View style={{ padding: 16 }}>
-            <TextInput
-              style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 10 }}
-              placeholder="Business name your team will see"
-              value={businessName}
-              onChangeText={setBusinessName}
-              placeholderTextColor={colors.textLight}
-              autoFocus
-            />
-            <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-              This updates the team-facing business name only.
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <TouchableOpacity
-                style={{ flex: 1, borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }}
-                onPress={() => {
-                  setEditBusinessName(false);
-                  setBusinessName(teamBusinessName);
-                }}
-              >
-                <Text style={{ color: colors.textLight, fontWeight: '600' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{ flex: 2, backgroundColor: colors.secondary, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }}
-                onPress={saveBusinessName}
-                disabled={savingBusinessName}
-              >
-                {savingBusinessName ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Save Business Name</Text>}
-              </TouchableOpacity>
+      {!editBusinessName ? (
+        <>
+          <Row
+            icon="business-outline"
+            label="Business Name"
+            value={teamBusinessName}
+            onPress={canEditBusinessName ? () => setEditBusinessName(true) : undefined}
+          />
+          {canEditBusinessName && (
+            <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+              <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
+                This is the name your team sees in BizFlow and invites.
+              </Text>
             </View>
-          </View>
-        )}
-      </Section>
-
-      {canManageBilling && (
-        <Section title="BizFlow Billing">
-          <View style={{ padding: 16 }}>
-            <BillingAdminCard
-              profile={profile}
-              colors={colors}
-              onRefresh={() => fetchProfile(profile.id)}
-            />
-          </View>
-        </Section>
-      )}
-
-      {canManagePayments && (
-        <Section title="Payments">
-          <View style={{ padding: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <View style={{ flex: 1, paddingRight: 12 }}>
-                <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>M-Pesa Integration</Text>
-                <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
-                  Save this business's Daraja details here, then staff can use M-Pesa at checkout.
-                </Text>
-              </View>
-              <Switch
-                value={paymentForm.is_enabled}
-                onValueChange={(value) => setPaymentForm((current) => ({ ...current, is_enabled: value }))}
-                trackColor={{ false: colors.border, true: colors.secondary }}
-                thumbColor="#fff"
-              />
-            </View>
-
-            {paymentSettingsLoading ? (
-              <ActivityIndicator color={colors.secondary} style={{ marginVertical: 24 }} />
-            ) : (
-              <>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 8 }}>Environment</Text>
-                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-                  {['sandbox', 'live'].map((value) => (
-                    <TouchableOpacity
-                      key={value}
-                      style={{
-                        flex: 1,
-                        height: 42,
-                        borderRadius: 12,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderWidth: 1.5,
-                        borderColor: paymentForm.environment === value ? colors.secondary : colors.border,
-                        backgroundColor: paymentForm.environment === value ? colors.secondary : 'transparent',
-                      }}
-                      onPress={() => setPaymentForm((current) => ({ ...current, environment: value }))}
-                    >
-                      <Text style={{ color: paymentForm.environment === value ? '#fff' : colors.text, fontWeight: '700' }}>
-                        {mpesaEnvironmentLabel(value)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 8 }}>Collection Type</Text>
-                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-                  {['paybill', 'till'].map((value) => (
-                    <TouchableOpacity
-                      key={value}
-                      style={{
-                        flex: 1,
-                        height: 42,
-                        borderRadius: 12,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderWidth: 1.5,
-                        borderColor: paymentForm.till_type === value ? colors.secondary : colors.border,
-                        backgroundColor: paymentForm.till_type === value ? colors.secondary : 'transparent',
-                      }}
-                      onPress={() => setPaymentForm((current) => ({ ...current, till_type: value }))}
-                    >
-                      <Text style={{ color: paymentForm.till_type === value ? '#fff' : colors.text, fontWeight: '700' }}>
-                        {mpesaTillTypeLabel(value)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {[
-                  { label: 'Shortcode or Till Number', key: 'shortcode', placeholder: 'e.g. 174379' },
-                  { label: 'Account Reference', key: 'account_reference', placeholder: profile?.businesses?.display_name || profile?.businesses?.name || 'BFlow' },
-                  { label: 'Consumer Key', key: 'consumer_key', placeholder: paymentSummary?.has_consumer_key ? 'Consumer key already stored. Leave blank to keep.' : 'Paste consumer key' },
-                  { label: 'Consumer Secret', key: 'consumer_secret', placeholder: paymentSummary?.has_consumer_secret ? 'Secret already stored. Leave blank to keep.' : 'Paste consumer secret' },
-                  { label: 'Passkey', key: 'passkey', placeholder: paymentSummary?.has_passkey ? 'Passkey already stored. Leave blank to keep.' : 'Paste M-Pesa passkey' },
-                ].map((field) => (
-                  <View key={field.key} style={{ marginBottom: 10 }}>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 5 }}>{field.label}</Text>
-                    <TextInput
-                      style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg }}
-                      placeholder={field.placeholder}
-                      value={paymentForm[field.key]}
-                      onChangeText={(value) => setPaymentForm((current) => ({ ...current, [field.key]: value }))}
-                      placeholderTextColor={colors.textLight}
-                      autoCapitalize="none"
-                      secureTextEntry={field.key === 'consumer_secret' || field.key === 'passkey'}
-                    />
-                  </View>
-                ))}
-
-                <View style={{ backgroundColor: colors.bg, borderRadius: 14, padding: 12, marginBottom: 12 }}>
-                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700', marginBottom: 4 }}>Current Status</Text>
-                  <Text style={{ color: colors.textLight, fontSize: 12, lineHeight: 18 }}>
-                    {paymentSummary?.configured
-                      ? `Configured for ${mpesaEnvironmentLabel(paymentSummary.environment)} ${mpesaTillTypeLabel(paymentSummary.till_type)}.`
-                      : 'Not configured yet.'}
-                    {' '}
-                    {paymentSummary?.configured && paymentSummary?.is_enabled ? 'Checkout is enabled.' : 'Turn the switch on when ready.'}
-                  </Text>
-                  {paymentSummary?.last_test_status ? (
-                    <Text style={{ color: colors.textLight, fontSize: 11, marginTop: 6 }}>
-                      Last connection result: {cleanText(paymentSummary.last_test_status)}
-                    </Text>
-                  ) : null}
-                </View>
-
-                <TouchableOpacity
-                  style={{ backgroundColor: colors.secondary, borderRadius: 12, height: 48, alignItems: 'center', justifyContent: 'center' }}
-                  onPress={savePaymentSettings}
-                  disabled={paymentSaving}
-                >
-                  {paymentSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '800' }}>Save M-Pesa Settings</Text>}
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </Section>
-      )}
-
-      <Section title="My Permissions">
-        <View style={{ padding: 14 }}>
-          <Text style={{ fontSize: 11, fontWeight: '700', color: colors.success, marginBottom: 6 }}>ALLOWED</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-            {allowedPerms.map((permission) => (
-              <View key={permission} style={{ backgroundColor: colors.success + '15', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
-                <Text style={{ fontSize: 10, fontWeight: '600', color: colors.success, textTransform: 'capitalize' }}>{permission.replace(/_/g, ' ')}</Text>
-              </View>
-            ))}
-          </View>
-          {deniedPerms.length > 0 && (
-            <>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: colors.danger, marginBottom: 6 }}>RESTRICTED</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                {deniedPerms.map((permission) => (
-                  <View key={permission} style={{ backgroundColor: colors.danger + '15', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
-                    <Text style={{ fontSize: 10, fontWeight: '600', color: colors.danger, textTransform: 'capitalize' }}>{permission.replace(/_/g, ' ')}</Text>
-                  </View>
-                ))}
-              </View>
-            </>
           )}
+        </>
+      ) : (
+        <View style={{ padding: 16 }}>
+          <TextInput
+            style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 10 }}
+            placeholder="Business name your team will see"
+            value={businessName}
+            onChangeText={setBusinessName}
+            placeholderTextColor={colors.textLight}
+            autoFocus
+          />
+          <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
+            This updates the team-facing business name only.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <TouchableOpacity
+              style={{ flex: 1, borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }}
+              onPress={() => {
+                setEditBusinessName(false);
+                setBusinessName(teamBusinessName);
+              }}
+            >
+              <Text style={{ color: colors.textLight, fontWeight: '600' }}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ flex: 2, backgroundColor: colors.secondary, borderRadius: 10, height: 44, alignItems: 'center', justifyContent: 'center' }}
+              onPress={saveBusinessName}
+              disabled={savingBusinessName}
+            >
+              {savingBusinessName ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Save Business Name</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+      </Section>
+    </View>
+  );
+
+  const billingSection = canManageBilling ? (
+    <View onLayout={rememberSectionOffset('billing')}>
+      <Section title="BizFlow Billing">
+        <View style={{ padding: 16 }}>
+          <BillingAdminCard
+            profile={profile}
+            colors={colors}
+            onRefresh={() => fetchProfile(profile.id)}
+          />
         </View>
       </Section>
+    </View>
+  ) : null;
 
+  const paymentsSection = canManagePayments ? (
+    <View onLayout={rememberSectionOffset('payments')}>
+      <Section title="Payments">
+        <View style={{ padding: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>M-Pesa Integration</Text>
+            <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
+              Save this business&apos;s Daraja details here, then staff can use M-Pesa at checkout.
+            </Text>
+          </View>
+          <Switch
+            value={paymentForm.is_enabled}
+            onValueChange={(value) => setPaymentForm((current) => ({ ...current, is_enabled: value }))}
+            trackColor={{ false: colors.border, true: colors.secondary }}
+            thumbColor="#fff"
+          />
+        </View>
+
+        {paymentSettingsLoading ? (
+          <ActivityIndicator color={colors.secondary} style={{ marginVertical: 24 }} />
+        ) : (
+          <>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 8 }}>Environment</Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+              {['sandbox', 'live'].map((value) => (
+                <TouchableOpacity
+                  key={value}
+                  style={{
+                    flex: 1,
+                    height: 42,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 1.5,
+                    borderColor: paymentForm.environment === value ? colors.secondary : colors.border,
+                    backgroundColor: paymentForm.environment === value ? colors.secondary : 'transparent',
+                  }}
+                  onPress={() => setPaymentForm((current) => ({ ...current, environment: value }))}
+                >
+                  <Text style={{ color: paymentForm.environment === value ? '#fff' : colors.text, fontWeight: '700' }}>
+                    {mpesaEnvironmentLabel(value)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 8 }}>Collection Type</Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+              {['paybill', 'till'].map((value) => (
+                <TouchableOpacity
+                  key={value}
+                  style={{
+                    flex: 1,
+                    height: 42,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 1.5,
+                    borderColor: paymentForm.till_type === value ? colors.secondary : colors.border,
+                    backgroundColor: paymentForm.till_type === value ? colors.secondary : 'transparent',
+                  }}
+                  onPress={() => setPaymentForm((current) => ({ ...current, till_type: value }))}
+                >
+                  <Text style={{ color: paymentForm.till_type === value ? '#fff' : colors.text, fontWeight: '700' }}>
+                    {mpesaTillTypeLabel(value)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {[
+              { label: 'Shortcode or Till Number', key: 'shortcode', placeholder: 'e.g. 174379' },
+              { label: 'Account Reference', key: 'account_reference', placeholder: profile?.businesses?.display_name || profile?.businesses?.name || 'BFlow' },
+              { label: 'Consumer Key', key: 'consumer_key', placeholder: paymentSummary?.has_consumer_key ? 'Consumer key already stored. Leave blank to keep.' : 'Paste consumer key' },
+              { label: 'Consumer Secret', key: 'consumer_secret', placeholder: paymentSummary?.has_consumer_secret ? 'Secret already stored. Leave blank to keep.' : 'Paste consumer secret' },
+              { label: 'Passkey', key: 'passkey', placeholder: paymentSummary?.has_passkey ? 'Passkey already stored. Leave blank to keep.' : 'Paste M-Pesa passkey' },
+            ].map((field) => (
+              <View key={field.key} style={{ marginBottom: 10 }}>
+                <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 5 }}>{field.label}</Text>
+                <TextInput
+                  style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg }}
+                  placeholder={field.placeholder}
+                  value={paymentForm[field.key]}
+                  onChangeText={(value) => setPaymentForm((current) => ({ ...current, [field.key]: value }))}
+                  placeholderTextColor={colors.textLight}
+                  autoCapitalize="none"
+                  secureTextEntry={field.key === 'consumer_secret' || field.key === 'passkey'}
+                />
+              </View>
+            ))}
+
+            <View style={{ backgroundColor: colors.bg, borderRadius: 14, padding: 12, marginBottom: 12 }}>
+              <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700', marginBottom: 4 }}>Current Status</Text>
+              <Text style={{ color: colors.textLight, fontSize: 12, lineHeight: 18 }}>
+                {paymentSummary?.configured
+                  ? `Configured for ${mpesaEnvironmentLabel(paymentSummary.environment)} ${mpesaTillTypeLabel(paymentSummary.till_type)}.`
+                  : 'Not configured yet.'}
+                {' '}
+                {paymentSummary?.configured && paymentSummary?.is_enabled ? 'Checkout is enabled.' : 'Turn the switch on when ready.'}
+              </Text>
+              {paymentSummary?.last_test_status ? (
+                <Text style={{ color: colors.textLight, fontSize: 11, marginTop: 6 }}>
+                  Last connection result: {cleanText(paymentSummary.last_test_status)}
+                </Text>
+              ) : null}
+            </View>
+
+            <TouchableOpacity
+              style={{ backgroundColor: colors.secondary, borderRadius: 12, height: 48, alignItems: 'center', justifyContent: 'center' }}
+              onPress={savePaymentSettings}
+              disabled={paymentSaving}
+            >
+              {paymentSaving ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '800' }}>Save M-Pesa Settings</Text>}
+            </TouchableOpacity>
+          </>
+        )}
+        </View>
+      </Section>
+    </View>
+  ) : null;
+
+  const permissionsSection = (
+    <Section title="My Permissions">
+      <View style={{ padding: 14 }}>
+        <Text style={{ fontSize: 11, fontWeight: '700', color: colors.success, marginBottom: 6 }}>ALLOWED</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+          {allowedPerms.map((permission) => (
+            <View key={permission} style={{ backgroundColor: colors.success + '15', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
+              <Text style={{ fontSize: 10, fontWeight: '600', color: colors.success, textTransform: 'capitalize' }}>{permission.replace(/_/g, ' ')}</Text>
+            </View>
+          ))}
+        </View>
+        {deniedPerms.length > 0 && (
+          <>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.danger, marginBottom: 6 }}>RESTRICTED</Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+              {deniedPerms.map((permission) => (
+                <View key={permission} style={{ backgroundColor: colors.danger + '15', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 }}>
+                  <Text style={{ fontSize: 10, fontWeight: '600', color: colors.danger, textTransform: 'capitalize' }}>{permission.replace(/_/g, ' ')}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+      </View>
+    </Section>
+  );
+
+  const accountSection = (
+    <View onLayout={rememberSectionOffset('account')}>
       <Section title="Account">
         <Row icon="calendar-outline" label="Joined" value={profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'} />
         <Row icon="checkmark-circle-outline" label="Status" value={profile?.status || 'active'} />
       </Section>
+    </View>
+  );
 
-      <TouchableOpacity
-        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 1.5, borderColor: colors.danger, borderRadius: 14, height: 52, marginTop: 8 }}
-        onPress={() => Alert.alert('Sign Out', 'Are you sure?', [{ text: 'Cancel' }, { text: 'Sign Out', style: 'destructive', onPress: signOut }])}
-      >
-        <Ionicons name="log-out-outline" size={20} color={colors.danger} />
-        <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>Sign Out</Text>
-      </TouchableOpacity>
+  const signOutButton = (
+    <TouchableOpacity
+      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 1.5, borderColor: colors.danger, borderRadius: 14, height: 52, marginTop: 8 }}
+      onPress={() => Alert.alert('Sign Out', 'Are you sure?', [{ text: 'Cancel' }, { text: 'Sign Out', style: 'destructive', onPress: signOut }])}
+    >
+      <Ionicons name="log-out-outline" size={20} color={colors.danger} />
+      <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>Sign Out</Text>
+    </TouchableOpacity>
+  );
+
+  return (
+    <ScrollView ref={scrollViewRef} style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 32 + insets.bottom, alignItems: 'center' }}>
+      <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1080 : 760 }}>
+        {profileHero}
+        {quickJumpBar}
+
+        {isDesktopWeb ? (
+          <View style={desktopColumns}>
+            <View style={{ flex: 1.02 }}>
+              {appearanceSection}
+              {securitySection}
+              {businessSection}
+              {permissionsSection}
+              {accountSection}
+              {signOutButton}
+            </View>
+            <View style={{ flex: 1 }}>
+              {billingSection}
+              {paymentsSection}
+            </View>
+          </View>
+        ) : (
+          <>
+            {businessSection}
+            {billingSection}
+            {paymentsSection}
+            {appearanceSection}
+            {securitySection}
+            {permissionsSection}
+            {accountSection}
+            {signOutButton}
+          </>
+        )}
       </View>
     </ScrollView>
   );
