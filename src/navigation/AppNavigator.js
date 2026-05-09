@@ -1,6 +1,6 @@
 import 'react-native-gesture-handler';
 import React, { useState } from 'react';
-import { View, ActivityIndicator, Platform, Modal, Text, TouchableOpacity } from 'react-native';
+import { View, ActivityIndicator, Platform, Modal, Text, TouchableOpacity, Image } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -68,20 +68,30 @@ const linking = {
   }
 };
 
-function BusinessHeaderTitle({ businessName, sectionName, colors }) {
+function BusinessHeaderTitle({ businessName, sectionName, colors, logoUrl }) {
   const title = businessName || 'BizFlow';
   const subtitle = sectionName && sectionName !== title ? sectionName : null;
+  const initial = title.trim().charAt(0)?.toUpperCase() || 'B';
 
   return (
-    <View style={{ alignItems: 'center' }}>
-      <Text numberOfLines={1} style={{ color: colors.headerText, fontWeight: '800', fontSize: 16 }}>
-        {title}
-      </Text>
-      {subtitle ? (
-        <Text numberOfLines={1} style={{ color: colors.headerText, opacity: 0.76, fontSize: 11, marginTop: 1 }}>
-          {subtitle}
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <View style={{ width: 30, height: 30, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginRight: 9 }}>
+        {logoUrl ? (
+          <Image source={{ uri: logoUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+        ) : (
+          <Text style={{ color: colors.headerText, fontWeight: '900', fontSize: 14 }}>{initial}</Text>
+        )}
+      </View>
+      <View style={{ alignItems: 'flex-start', maxWidth: 210 }}>
+        <Text numberOfLines={1} style={{ color: colors.headerText, fontWeight: '800', fontSize: 16 }}>
+          {title}
         </Text>
-      ) : null}
+        {subtitle ? (
+          <Text numberOfLines={1} style={{ color: colors.headerText, opacity: 0.76, fontSize: 11, marginTop: 1 }}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -106,7 +116,7 @@ function HeaderUtilityButton({ colors, onPress }) {
   );
 }
 
-function SalesStackScreen({ colors, onOpenUtilityMenu, showUtilityButton, businessName }) {
+function SalesStackScreen({ colors, onOpenUtilityMenu, showUtilityButton, businessName, businessLogoUrl }) {
   return (
     <SalesStack.Navigator screenOptions={{
       headerStyle: { backgroundColor: colors.header },
@@ -120,14 +130,14 @@ function SalesStackScreen({ colors, onOpenUtilityMenu, showUtilityButton, busine
         name="SalesHistory"
         component={SalesHistoryScreen}
         options={{
-          headerTitle: () => <BusinessHeaderTitle businessName={businessName} sectionName="Sales" colors={colors} />,
+          headerTitle: () => <BusinessHeaderTitle businessName={businessName} sectionName="Sales" colors={colors} logoUrl={businessLogoUrl} />,
         }}
       />
       <SalesStack.Screen
         name="NewSale"
         component={NewSaleScreen}
         options={{
-          headerTitle: () => <BusinessHeaderTitle businessName={businessName} sectionName="New Sale" colors={colors} />,
+          headerTitle: () => <BusinessHeaderTitle businessName={businessName} sectionName="New Sale" colors={colors} logoUrl={businessLogoUrl} />,
         }}
       />
     </SalesStack.Navigator>
@@ -140,6 +150,7 @@ function MainTabs({ navigation: rootNavigation }) {
   const insets = useSafeAreaInsets();
   const [utilityMenuOpen, setUtilityMenuOpen] = useState(false);
   const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'BizFlow';
+  const teamBusinessLogoUrl = profile?.businesses?.logo_url || '';
   const tabBarBottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 8);
   const tabBarHeight = (Platform.OS === 'android' ? 62 : 58) + tabBarBottomPadding;
   const canSeeOnboardings = canViewPlatformOnboardings(profile);
@@ -203,6 +214,7 @@ function MainTabs({ navigation: rootNavigation }) {
               businessName={teamBusinessName}
               sectionName={route.name === 'Dashboard' ? 'Dashboard' : route.name}
               colors={colors}
+              logoUrl={teamBusinessLogoUrl}
             />
           ),
           headerRight: showUtilityButton
@@ -220,6 +232,7 @@ function MainTabs({ navigation: rootNavigation }) {
                 onOpenUtilityMenu={() => setUtilityMenuOpen(true)}
                 showUtilityButton={showUtilityButton}
                 businessName={teamBusinessName}
+                businessLogoUrl={teamBusinessLogoUrl}
               />
             )}
           </Tab.Screen>
@@ -314,6 +327,7 @@ function AppStack() {
   const { colors } = useTheme();
   const canSeeOnboardings = canViewPlatformOnboardings(profile);
   const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'BizFlow';
+  const teamBusinessLogoUrl = profile?.businesses?.logo_url || '';
 
   return (
     <Stack.Navigator
@@ -330,7 +344,7 @@ function AppStack() {
           name="Staff"
           component={StaffScreen}
           options={{
-            headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Staff Control" colors={colors} />,
+            headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Staff Control" colors={colors} logoUrl={teamBusinessLogoUrl} />,
           }}
         />
       )}
@@ -339,7 +353,7 @@ function AppStack() {
           name="Onboardings"
           component={OnboardedEmailsScreen}
           options={{
-            headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Onboarded Emails" colors={colors} />,
+            headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Onboarded Emails" colors={colors} logoUrl={teamBusinessLogoUrl} />,
           }}
         />
       )}
@@ -347,7 +361,7 @@ function AppStack() {
         name="Profile"
         component={ProfileScreen}
         options={{
-          headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Settings" colors={colors} />,
+          headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Settings" colors={colors} logoUrl={teamBusinessLogoUrl} />,
         }}
       />
     </Stack.Navigator>
@@ -358,6 +372,7 @@ function BillingStack() {
   const { profile } = useAuth();
   const { colors } = useTheme();
   const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'BizFlow';
+  const teamBusinessLogoUrl = profile?.businesses?.logo_url || '';
 
   return (
     <Stack.Navigator
@@ -372,7 +387,7 @@ function BillingStack() {
         name="BillingGate"
         component={BillingGateScreen}
         options={{
-          headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Renew Access" colors={colors} />,
+          headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Renew Access" colors={colors} logoUrl={teamBusinessLogoUrl} />,
         }}
       />
     </Stack.Navigator>

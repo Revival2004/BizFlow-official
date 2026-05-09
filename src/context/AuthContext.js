@@ -52,7 +52,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*, roles(*), businesses(id, name, display_name, status, billing_status, subscription_started_at, subscription_expires_at, current_plan_id, current_plan:billing_plans!businesses_current_plan_id_fkey(id, slug, name, is_lifetime, is_trial, billing_days))')
+        .select('*, roles(*), businesses(id, name, display_name, logo_url, status, billing_status, subscription_started_at, subscription_expires_at, current_plan_id, current_plan:billing_plans!businesses_current_plan_id_fkey(id, slug, name, is_lifetime, is_trial, billing_days))')
         .eq('id', userId)
         .maybeSingle();
 

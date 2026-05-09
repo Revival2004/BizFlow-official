@@ -1,6 +1,8 @@
 alter table public.sales add column if not exists payment_payer_name text;
 alter table public.sales add column if not exists payment_reference text;
 alter table public.sales add column if not exists payment_message text;
+alter table public.businesses add column if not exists logo_url text;
+alter table public.businesses add column if not exists tagline text;
 
 alter table public.billing_plans alter column currency set default 'KES';
 alter table public.billing_checkouts alter column currency set default 'KES';

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Alert, ScrollView, TextInput, ActivityIndicator, Switch, Platform, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Alert, ScrollView, TextInput, ActivityIndicator, Switch, Platform, useWindowDimensions, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../utils/supabase';
@@ -20,8 +21,13 @@ export default function ProfileScreen() {
   const [name, setName] = useState(profile?.full_name || '');
   const [editBusinessName, setEditBusinessName] = useState(false);
   const [businessName, setBusinessName] = useState(profile?.businesses?.display_name || profile?.businesses?.name || '');
+  const [businessTagline, setBusinessTagline] = useState('');
+  const [businessLogoUrl, setBusinessLogoUrl] = useState(profile?.businesses?.logo_url || '');
+  const [savedBusinessTagline, setSavedBusinessTagline] = useState('');
+  const [savedBusinessLogoUrl, setSavedBusinessLogoUrl] = useState(profile?.businesses?.logo_url || '');
   const [saving, setSaving] = useState(false);
   const [savingBusinessName, setSavingBusinessName] = useState(false);
+  const [pickingBusinessLogo, setPickingBusinessLogo] = useState(false);
   const [changingPass, setChangingPass] = useState(false);
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
@@ -46,7 +52,53 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     setBusinessName(profile?.businesses?.display_name || profile?.businesses?.name || '');
-  }, [profile?.businesses?.display_name, profile?.businesses?.name]);
+    setBusinessLogoUrl(profile?.businesses?.logo_url || '');
+    setSavedBusinessLogoUrl(profile?.businesses?.logo_url || '');
+  }, [profile?.businesses?.display_name, profile?.businesses?.name, profile?.businesses?.logo_url]);
+
+  useEffect(() => {
+    if (!profile?.business_id) {
+      setBusinessTagline('');
+      return;
+    }
+
+    let isActive = true;
+
+    const fetchBusinessIdentity = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('businesses')
+          .select('*')
+          .eq('id', profile.business_id)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        if (!isActive || !data) {
+          return;
+        }
+
+        setBusinessName(data.display_name || data.name || '');
+        setBusinessLogoUrl(data.logo_url || '');
+        setBusinessTagline(data.tagline || '');
+        setSavedBusinessLogoUrl(data.logo_url || '');
+        setSavedBusinessTagline(data.tagline || '');
+      } catch (_error) {
+        if (isActive) {
+          setBusinessTagline('');
+          setSavedBusinessTagline('');
+        }
+      }
+    };
+
+    fetchBusinessIdentity();
+
+    return () => {
+      isActive = false;
+    };
+  }, [profile?.business_id]);
 
   useEffect(() => {
     if (!profile?.business_id || !hasPermission('manage_payments')) {
@@ -139,8 +191,66 @@ export default function ProfileScreen() {
     }
   };
 
+  const assetToDataUrl = async (asset) => {
+    if (!asset) {
+      return '';
+    }
+
+    if (asset.base64) {
+      return `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`;
+    }
+
+    if (Platform.OS === 'web' && asset.uri) {
+      const response = await fetch(asset.uri);
+      const blob = await response.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Could not read the selected logo.'));
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    return asset.uri || '';
+  };
+
+  const pickBusinessLogo = async () => {
+    if (!isAdmin()) {
+      return;
+    }
+
+    setPickingBusinessLogo(true);
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.72,
+        base64: true,
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const nextLogo = await assetToDataUrl(result.assets?.[0]);
+      if (!nextLogo) {
+        throw new Error('The selected image could not be prepared for upload.');
+      }
+
+      setBusinessLogoUrl(nextLogo);
+    } catch (error) {
+      Alert.alert('Logo Upload Error', error.message || 'Could not pick that logo.');
+    } finally {
+      setPickingBusinessLogo(false);
+    }
+  };
+
   const saveBusinessName = async () => {
     const nextBusinessName = businessName.trim();
+    const nextBusinessTagline = businessTagline.trim();
+    const nextBusinessLogoUrl = cleanText(businessLogoUrl || '').trim() || null;
     if (!profile?.business_id) {
       return;
     }
@@ -153,16 +263,38 @@ export default function ProfileScreen() {
     setSavingBusinessName(true);
 
     try {
-      const { error } = await supabase
+      const nextPayload = {
+        display_name: nextBusinessName,
+        logo_url: nextBusinessLogoUrl,
+        tagline: nextBusinessTagline || null,
+      };
+
+      let { error } = await supabase
         .from('businesses')
-        .update({ display_name: nextBusinessName })
+        .update(nextPayload)
         .eq('id', profile.business_id);
+
+      if (error && /tagline/i.test(error.message || '')) {
+        ({ error } = await supabase
+          .from('businesses')
+          .update({
+            display_name: nextBusinessName,
+            logo_url: nextBusinessLogoUrl,
+          })
+          .eq('id', profile.business_id));
+
+        if (!error) {
+          Alert.alert('Saved', 'Business name and logo were saved. Run the latest BizFlow schema patch to enable tagline saving too.');
+        }
+      }
 
       if (error) {
         throw error;
       }
 
       await fetchProfile(profile.id);
+      setSavedBusinessLogoUrl(nextBusinessLogoUrl || '');
+      setSavedBusinessTagline(nextBusinessTagline || '');
       setEditBusinessName(false);
     } catch (error) {
       Alert.alert('Error', error.message);
@@ -218,6 +350,10 @@ export default function ProfileScreen() {
   const allowedPerms = Object.entries(perms).filter(([, allowed]) => allowed).map(([permission]) => permission);
   const deniedPerms = Object.entries(perms).filter(([, allowed]) => !allowed).map(([permission]) => permission);
   const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'Your Business';
+  const teamBusinessTagline = (editBusinessName ? businessTagline : savedBusinessTagline || businessTagline).trim();
+  const businessInitial = (teamBusinessName || 'B').trim().charAt(0)?.toUpperCase() || 'B';
+  const resolvedBusinessLogoUrl = editBusinessName ? businessLogoUrl : (savedBusinessLogoUrl || businessLogoUrl);
+  const hasBusinessLogo = Boolean((resolvedBusinessLogoUrl || '').trim());
   const canEditBusinessName = isAdmin();
   const canManageBilling = hasPermission('manage_billing');
   const canManagePayments = hasPermission('manage_payments');
@@ -333,9 +469,9 @@ export default function ProfileScreen() {
   );
 
   const quickJumpBar = quickJumpItems.length > 1 ? (
-    <View style={{ marginBottom: 16 }}>
+    <View style={{ marginBottom: 4 }}>
       <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textLight, marginBottom: 8, paddingLeft: 4, letterSpacing: 0.5, textTransform: 'uppercase' }}>Quick Jump</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 16 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
         {quickJumpItems.map((item) => (
           <TouchableOpacity
             key={item.key}
@@ -345,7 +481,7 @@ export default function ProfileScreen() {
             <Text style={{ color: colors.secondary, fontWeight: '800', fontSize: 12 }}>{item.label}</Text>
           </TouchableOpacity>
         ))}
-      </ScrollView>
+      </View>
     </View>
   ) : null;
 
@@ -385,23 +521,63 @@ export default function ProfileScreen() {
     <View nativeID={sectionAnchors.business} onLayout={rememberSectionOffset('business')}>
       <Section title="Business">
       {!editBusinessName ? (
-        <>
-          <Row
-            icon="business-outline"
-            label="Business Name"
-            value={teamBusinessName}
-            onPress={canEditBusinessName ? () => setEditBusinessName(true) : undefined}
-          />
-          {canEditBusinessName && (
-            <View style={{ paddingHorizontal: 16, paddingBottom: 16 }}>
-              <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-                This is the name your team sees in BizFlow and invites.
+        <View style={{ padding: 16 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ width: 68, height: 68, borderRadius: 18, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginRight: 14 }}>
+              {hasBusinessLogo ? (
+                <Image source={{ uri: resolvedBusinessLogoUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+              ) : (
+                <Text style={{ fontSize: 28, fontWeight: '900', color: colors.secondary }}>{businessInitial}</Text>
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>{teamBusinessName}</Text>
+              <Text style={{ fontSize: 12, color: colors.textLight, marginTop: 4, lineHeight: 18 }}>
+                {teamBusinessTagline || 'Add a short tagline and a logo to make the business feel complete across BizFlow.'}
               </Text>
             </View>
-          )}
-        </>
+          </View>
+
+          {canEditBusinessName ? (
+            <TouchableOpacity
+              style={{ marginTop: 14, height: 44, borderRadius: 12, borderWidth: 1.5, borderColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }}
+              onPress={() => setEditBusinessName(true)}
+            >
+              <Text style={{ color: colors.secondary, fontWeight: '800' }}>Edit Business Identity</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       ) : (
         <View style={{ padding: 16 }}>
+          <View style={{ flexDirection: isDesktopWeb ? 'row' : 'column', gap: 14, marginBottom: 14 }}>
+            <View style={{ alignItems: isDesktopWeb ? 'flex-start' : 'center' }}>
+              <View style={{ width: 90, height: 90, borderRadius: 22, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                {hasBusinessLogo ? (
+                  <Image source={{ uri: businessLogoUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                ) : (
+                  <Text style={{ fontSize: 34, fontWeight: '900', color: colors.secondary }}>{businessInitial}</Text>
+                )}
+              </View>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                <TouchableOpacity
+                  style={{ borderWidth: 1.5, borderColor: colors.secondary, borderRadius: 12, paddingHorizontal: 14, height: 42, alignItems: 'center', justifyContent: 'center' }}
+                  onPress={pickBusinessLogo}
+                  disabled={pickingBusinessLogo}
+                >
+                  {pickingBusinessLogo ? <ActivityIndicator color={colors.secondary} size="small" /> : <Text style={{ color: colors.secondary, fontWeight: '800' }}>Upload Logo</Text>}
+                </TouchableOpacity>
+                {hasBusinessLogo ? (
+                  <TouchableOpacity
+                    style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 12, paddingHorizontal: 14, height: 42, alignItems: 'center', justifyContent: 'center' }}
+                    onPress={() => setBusinessLogoUrl('')}
+                  >
+                    <Text style={{ color: colors.textLight, fontWeight: '700' }}>Remove</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+
+            <View style={{ flex: 1 }}>
           <TextInput
             style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, height: 48, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, marginBottom: 10 }}
             placeholder="Business name your team will see"
@@ -410,8 +586,19 @@ export default function ProfileScreen() {
             placeholderTextColor={colors.textLight}
             autoFocus
           />
+              <TextInput
+                style={{ borderWidth: 1.5, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, minHeight: 78, fontSize: 14, color: colors.text, backgroundColor: colors.inputBg, textAlignVertical: 'top' }}
+                placeholder="Optional tagline for receipts, headers and polished branding"
+                value={businessTagline}
+                onChangeText={setBusinessTagline}
+                placeholderTextColor={colors.textLight}
+                multiline
+                maxLength={120}
+              />
+            </View>
+          </View>
           <Text style={{ fontSize: 12, color: colors.textLight, lineHeight: 18 }}>
-            This updates the team-facing business name only.
+            Upload a square logo for the cleanest result. The tagline is optional.
           </Text>
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
             <TouchableOpacity
@@ -419,6 +606,8 @@ export default function ProfileScreen() {
               onPress={() => {
                 setEditBusinessName(false);
                 setBusinessName(teamBusinessName);
+                setBusinessTagline(savedBusinessTagline || '');
+                setBusinessLogoUrl(savedBusinessLogoUrl || profile?.businesses?.logo_url || '');
               }}
             >
               <Text style={{ color: colors.textLight, fontWeight: '600' }}>Cancel</Text>
@@ -620,38 +809,57 @@ export default function ProfileScreen() {
   );
 
   return (
-    <ScrollView ref={scrollViewRef} style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, paddingBottom: 32 + insets.bottom, alignItems: 'center' }}>
-      <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1080 : 760 }}>
-        {profileHero}
-        {quickJumpBar}
+    <ScrollView
+      ref={scrollViewRef}
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
+      stickyHeaderIndices={quickJumpBar ? [1] : []}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={{ paddingHorizontal: 16, paddingTop: 16, alignItems: 'center' }}>
+        <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1080 : 760 }}>
+          {profileHero}
+        </View>
+      </View>
 
-        {isDesktopWeb ? (
-          <View style={desktopColumns}>
-            <View style={{ flex: 1.02 }}>
+      {quickJumpBar ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 12, backgroundColor: colors.bg, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1080 : 760 }}>
+            {quickJumpBar}
+          </View>
+        </View>
+      ) : null}
+
+      <View style={{ paddingHorizontal: 16, paddingTop: 12, alignItems: 'center' }}>
+        <View style={{ width: '100%', maxWidth: isDesktopWeb ? 1080 : 760 }}>
+          {isDesktopWeb ? (
+            <View style={desktopColumns}>
+              <View style={{ flex: 1.02 }}>
+                {appearanceSection}
+                {securitySection}
+                {businessSection}
+                {permissionsSection}
+                {accountSection}
+                {signOutButton}
+              </View>
+              <View style={{ flex: 1 }}>
+                {billingSection}
+                {paymentsSection}
+              </View>
+            </View>
+          ) : (
+            <>
+              {businessSection}
+              {billingSection}
+              {paymentsSection}
               {appearanceSection}
               {securitySection}
-              {businessSection}
               {permissionsSection}
               {accountSection}
               {signOutButton}
-            </View>
-            <View style={{ flex: 1 }}>
-              {billingSection}
-              {paymentsSection}
-            </View>
-          </View>
-        ) : (
-          <>
-            {businessSection}
-            {billingSection}
-            {paymentsSection}
-            {appearanceSection}
-            {securitySection}
-            {permissionsSection}
-            {accountSection}
-            {signOutButton}
-          </>
-        )}
+            </>
+          )}
+        </View>
       </View>
     </ScrollView>
   );

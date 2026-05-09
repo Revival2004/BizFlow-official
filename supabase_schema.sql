@@ -21,6 +21,7 @@ create table if not exists public.businesses (
   address     text,
   currency    text default 'GBP',
   logo_url    text,
+  tagline     text,
   status      text default 'active',
   billing_status text default 'trialing',
   current_plan_id uuid,
@@ -307,6 +308,8 @@ alter table public.billing_plans alter column currency set default 'KES';
 alter table public.billing_checkouts alter column currency set default 'KES';
 alter table public.businesses add column if not exists status text default 'active';
 alter table public.businesses add column if not exists display_name text;
+alter table public.businesses add column if not exists logo_url text;
+alter table public.businesses add column if not exists tagline text;
 alter table public.businesses add column if not exists billing_status text default 'trialing';
 alter table public.businesses add column if not exists current_plan_id uuid;
 alter table public.businesses add column if not exists subscription_started_at timestamptz;
