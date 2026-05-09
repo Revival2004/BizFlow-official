@@ -9,6 +9,11 @@ dist/
 web-build/
 web-export-*/
 expo-env.d.ts
+bizflow-netlify-latest/
+__github_source_stage/
+bizflow-github-source-latest.zip
+bizflow-netlify-latest.zip
+bizflow-netlify.zip
 
 # Native
 .kotlin/
