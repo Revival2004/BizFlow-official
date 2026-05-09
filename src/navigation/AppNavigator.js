@@ -68,6 +68,24 @@ const linking = {
   }
 };
 
+function BusinessHeaderTitle({ businessName, sectionName, colors }) {
+  const title = businessName || 'BizFlow';
+  const subtitle = sectionName && sectionName !== title ? sectionName : null;
+
+  return (
+    <View style={{ alignItems: 'center' }}>
+      <Text numberOfLines={1} style={{ color: colors.headerText, fontWeight: '800', fontSize: 16 }}>
+        {title}
+      </Text>
+      {subtitle ? (
+        <Text numberOfLines={1} style={{ color: colors.headerText, opacity: 0.76, fontSize: 11, marginTop: 1 }}>
+          {subtitle}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function HeaderUtilityButton({ colors, onPress }) {
   return (
     <TouchableOpacity
@@ -88,7 +106,7 @@ function HeaderUtilityButton({ colors, onPress }) {
   );
 }
 
-function SalesStackScreen({ colors, onOpenUtilityMenu, showUtilityButton }) {
+function SalesStackScreen({ colors, onOpenUtilityMenu, showUtilityButton, businessName }) {
   return (
     <SalesStack.Navigator screenOptions={{
       headerStyle: { backgroundColor: colors.header },
@@ -98,8 +116,20 @@ function SalesStackScreen({ colors, onOpenUtilityMenu, showUtilityButton }) {
         ? () => <HeaderUtilityButton colors={colors} onPress={onOpenUtilityMenu} />
         : undefined,
     }}>
-      <SalesStack.Screen name="SalesHistory" component={SalesHistoryScreen} options={{ title: 'Sales' }} />
-      <SalesStack.Screen name="NewSale" component={NewSaleScreen} options={{ title: 'New Sale' }} />
+      <SalesStack.Screen
+        name="SalesHistory"
+        component={SalesHistoryScreen}
+        options={{
+          headerTitle: () => <BusinessHeaderTitle businessName={businessName} sectionName="Sales" colors={colors} />,
+        }}
+      />
+      <SalesStack.Screen
+        name="NewSale"
+        component={NewSaleScreen}
+        options={{
+          headerTitle: () => <BusinessHeaderTitle businessName={businessName} sectionName="New Sale" colors={colors} />,
+        }}
+      />
     </SalesStack.Navigator>
   );
 }
@@ -109,6 +139,7 @@ function MainTabs({ navigation: rootNavigation }) {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const [utilityMenuOpen, setUtilityMenuOpen] = useState(false);
+  const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'BizFlow';
   const tabBarBottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 8);
   const tabBarHeight = (Platform.OS === 'android' ? 62 : 58) + tabBarBottomPadding;
   const canSeeOnboardings = canViewPlatformOnboardings(profile);
@@ -167,13 +198,20 @@ function MainTabs({ navigation: rootNavigation }) {
           headerStyle: { backgroundColor: colors.header, elevation: 0, shadowOpacity: 0 },
           headerTintColor: colors.headerText,
           headerTitleStyle: { fontWeight: '700', fontSize: 18 },
+          headerTitle: () => (
+            <BusinessHeaderTitle
+              businessName={teamBusinessName}
+              sectionName={route.name === 'Dashboard' ? 'Dashboard' : route.name}
+              colors={colors}
+            />
+          ),
           headerRight: showUtilityButton
             ? () => <HeaderUtilityButton colors={colors} onPress={() => setUtilityMenuOpen(true)} />
             : undefined,
           sceneStyle: { backgroundColor: colors.bg },
         })}
       >
-        <Tab.Screen name="Dashboard" component={DashboardScreen} options={{ headerTitle: 'BFlow', title: 'Home' }} />
+        <Tab.Screen name="Dashboard" component={DashboardScreen} options={{ title: 'Home' }} />
         {hasPermission('view_sales') && (
           <Tab.Screen name="Sales" options={{ headerShown: false, title: 'Sales' }}>
             {() => (
@@ -181,6 +219,7 @@ function MainTabs({ navigation: rootNavigation }) {
                 colors={colors}
                 onOpenUtilityMenu={() => setUtilityMenuOpen(true)}
                 showUtilityButton={showUtilityButton}
+                businessName={teamBusinessName}
               />
             )}
           </Tab.Screen>
@@ -274,6 +313,7 @@ function AppStack() {
   const { hasPermission, profile } = useAuth();
   const { colors } = useTheme();
   const canSeeOnboardings = canViewPlatformOnboardings(profile);
+  const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'BizFlow';
 
   return (
     <Stack.Navigator
@@ -286,18 +326,38 @@ function AppStack() {
     >
       <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
       {hasPermission('manage_staff') && (
-        <Stack.Screen name="Staff" component={StaffScreen} options={{ title: 'Staff Control' }} />
+        <Stack.Screen
+          name="Staff"
+          component={StaffScreen}
+          options={{
+            headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Staff Control" colors={colors} />,
+          }}
+        />
       )}
       {canSeeOnboardings && (
-        <Stack.Screen name="Onboardings" component={OnboardedEmailsScreen} options={{ title: 'Onboarded Emails' }} />
+        <Stack.Screen
+          name="Onboardings"
+          component={OnboardedEmailsScreen}
+          options={{
+            headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Onboarded Emails" colors={colors} />,
+          }}
+        />
       )}
-      <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'Settings' }} />
+      <Stack.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{
+          headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Settings" colors={colors} />,
+        }}
+      />
     </Stack.Navigator>
   );
 }
 
 function BillingStack() {
+  const { profile } = useAuth();
   const { colors } = useTheme();
+  const teamBusinessName = profile?.businesses?.display_name || profile?.businesses?.name || 'BizFlow';
 
   return (
     <Stack.Navigator
@@ -311,7 +371,9 @@ function BillingStack() {
       <Stack.Screen
         name="BillingGate"
         component={BillingGateScreen}
-        options={{ title: 'Renew BizFlow Access' }}
+        options={{
+          headerTitle: () => <BusinessHeaderTitle businessName={teamBusinessName} sectionName="Renew Access" colors={colors} />,
+        }}
       />
     </Stack.Navigator>
   );
